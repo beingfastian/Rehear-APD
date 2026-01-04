@@ -1,0 +1,2 @@
+HTTPSConnectionPool(host='your-webhook-receiver.com', port=443): Max retries exceeded with url: /webhook (Caused by NameResolutionError("HTTPSConnection(host='your-webhook-receiver.com', port=443): Failed to resolve 'your-webhook-receiver.com' ([Errno 11001] getaddrinfo failed)"))
+HTTPSConnectionPool(host='your-webhook-receiver.com', port=443): Max retries exceeded with url: /webhook (Caused by NameResolutionError("HTTPSConnection(host='your-webhook-receiver.com', port=443): Failed to resolve 'your-webhook-receiver.com' ([Errno 11001] getaddrinfo failed)"))

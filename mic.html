@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Record Instruction</title>
+</head>
+<body>
+
+<h1>Record Instruction</h1>
+
+<button onclick="startRecording()">Start Recording</button>
+<button onclick="stopRecording()">Stop Recording</button>
+
+<pre id="status"></pre>
+
+<script>
+let recorder;
+let audioChunks = [];
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  recorder = new MediaRecorder(stream);
+  audioChunks = [];
+
+  recorder.ondataavailable = e => audioChunks.push(e.data);
+  recorder.start();
+
+  document.getElementById("status").innerText = "Recording...";
+}
+
+function stopRecording() {
+  recorder.stop();
+  document.getElementById("status").innerText = "Processing...";
+
+  recorder.onstop = async () => {
+    const blob = new Blob(audioChunks, { type: "audio/wav" });
+    const formData = new FormData();
+    formData.append("file", blob, "recording.wav");
+
+    const res = await fetch("/analyze-audio", {
+      method: "POST",
+      body: formData
+    });
+
+    const result = await res.json();
+
+    if (!result.instructions || result.instructions.length === 0) {
+      document.getElementById("status").innerText =
+        "No instructional content detected.";
+    } else {
+      document.getElementById("status").innerText =
+        JSON.stringify(result, null, 2);
+    }
+  };
+}
+</script>
+
+</body>
+</html>
