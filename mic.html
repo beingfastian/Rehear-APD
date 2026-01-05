@@ -1,56 +1,102 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Record Instruction</title>
+    <title>Record Instruction</title>
 </head>
 <body>
 
 <h1>Record Instruction</h1>
 
-<button onclick="startRecording()">Start Recording</button>
-<button onclick="stopRecording()">Stop Recording</button>
+<button onclick="startRecording()">🎙 Start Recording</button>
+<button onclick="stopRecording()">⏹ Stop Recording</button>
+<button onclick="resetAll()">🔄 Reset</button>
 
-<pre id="status"></pre>
+<br><br>
+
+<input type="file" accept="audio/*" onchange="uploadFile(this.files[0])">
+
+<br><br>
+
+<button onclick="speakSteps()">🔊 Speak Steps</button>
+
+<pre id="output"></pre>
 
 <script>
 let recorder;
-let audioChunks = [];
+let chunks = [];
+let lastSteps = [];
 
 async function startRecording() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  recorder = new MediaRecorder(stream);
-  audioChunks = [];
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    chunks = [];
 
-  recorder.ondataavailable = e => audioChunks.push(e.data);
-  recorder.start();
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: "audio/wav" });
+        sendRecordedAudio(blob);
+    };
 
-  document.getElementById("status").innerText = "Recording...";
+    recorder.start();
 }
 
 function stopRecording() {
-  recorder.stop();
-  document.getElementById("status").innerText = "Processing...";
+    if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+    }
+}
 
-  recorder.onstop = async () => {
-    const blob = new Blob(audioChunks, { type: "audio/wav" });
-    const formData = new FormData();
-    formData.append("file", blob, "recording.wav");
+function resetAll() {
+    document.getElementById("output").textContent = "";
+    lastSteps = [];
+}
+
+async function uploadFile(file) {
+    sendAudioFile(file);
+}
+
+async function sendRecordedAudio(blob) {
+    const file = new File([blob], "recording.wav", { type: "audio/wav" });
+    sendAudioFile(file);
+}
+
+async function sendAudioFile(file) {
+    const form = new FormData();
+    form.append("file", file);
+
+    document.getElementById("output").textContent = "Processing...";
 
     const res = await fetch("/analyze-audio", {
-      method: "POST",
-      body: formData
+        method: "POST",
+        body: form
     });
 
-    const result = await res.json();
+    const data = await res.json();
+    document.getElementById("output").textContent = JSON.stringify(data, null, 2);
 
-    if (!result.instructions || result.instructions.length === 0) {
-      document.getElementById("status").innerText =
-        "No instructional content detected.";
-    } else {
-      document.getElementById("status").innerText =
-        JSON.stringify(result, null, 2);
+    lastSteps = [];
+    if (data.instructions) {
+        data.instructions.forEach(i => {
+            lastSteps.push(...i.steps);
+        });
     }
-  };
+}
+
+async function speakSteps() {
+    if (lastSteps.length === 0) {
+        alert("No steps to speak");
+        return;
+    }
+
+    const res = await fetch("/speak-steps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(lastSteps)
+    });
+
+    const blob = await res.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+    audio.play();
 }
 </script>
 

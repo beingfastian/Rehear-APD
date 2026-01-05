@@ -3,30 +3,17 @@ import re
 import json
 import tempfile
 from datetime import datetime
-from pathlib import Path
 
 import requests
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
-
-from dotenv import load_dotenv
-
-# =====================================================
-# LOAD .env (so OPENAI_API_KEY / WEBHOOK_* work on uvicorn)
-# =====================================================
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
-
-def env_bool(key: str, default: bool = False) -> bool:
-    val = os.getenv(key)
-    if val is None:
-        return default
-    return val.strip().lower() in ("1", "true", "yes", "on")
 
 # =====================================================
 # APP INIT
 # =====================================================
+
 app = FastAPI(title="Instruction Extraction API")
 
 app.add_middleware(
@@ -37,26 +24,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =====================================================
-# OPENAI CONFIG (DYNAMIC)
-# =====================================================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY is missing. Put it in .env or set it in your environment."
-    )
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI()
 
 # =====================================================
-# WEBHOOK CONFIG (DYNAMIC)
+# WEBHOOK CONFIG (ENV BASED)
 # =====================================================
-WEBHOOK_ENABLED = env_bool("WEBHOOK_ENABLED", default=False)
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+
+WEBHOOK_ENABLED = os.getenv("WEBHOOK_ENABLED", "false").lower() == "true"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # =====================================================
 # HTML MIC PAGE
 # =====================================================
+
 @app.get("/mic", response_class=HTMLResponse)
 def mic_page():
     with open("mic.html", "r", encoding="utf-8") as f:
@@ -65,6 +45,7 @@ def mic_page():
 # =====================================================
 # HEALTH CHECK
 # =====================================================
+
 @app.get("/")
 def health_check():
     return {"status": "Instruction Extraction API is running"}
@@ -72,6 +53,7 @@ def health_check():
 # =====================================================
 # CORE AI LOGIC
 # =====================================================
+
 def transcribe_english(audio_path: str) -> str:
     with open(audio_path, "rb") as f:
         text = client.audio.transcriptions.create(
@@ -81,6 +63,7 @@ def transcribe_english(audio_path: str) -> str:
             response_format="text",
         )
     return text.strip()
+
 
 def detect_instructions(text: str) -> dict:
     system_prompt = """
@@ -106,6 +89,7 @@ If none:
   "instructions": []
 }
 """
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -116,6 +100,7 @@ If none:
     )
 
     return json.loads(response.choices[0].message.content)
+
 
 def split_instruction_steps(instruction: str) -> list:
     instruction = instruction.lower()
@@ -134,20 +119,19 @@ def split_instruction_steps(instruction: str) -> list:
 # =====================================================
 # LOGGING
 # =====================================================
+
 def log_request(filename: str, instruction_count: int):
     ts = datetime.utcnow().isoformat() + "Z"
     with open("requests.log", "a", encoding="utf-8") as f:
         f.write(f"{ts} | file={filename} | instructions={instruction_count}\n")
 
 # =====================================================
-# WEBHOOK SENDER (SAFE)
+# WEBHOOK
 # =====================================================
-def send_webhook(payload: dict):
-    if not WEBHOOK_ENABLED:
-        return
-    if not WEBHOOK_URL:
-        return
 
+def send_webhook(payload: dict):
+    if not WEBHOOK_ENABLED or not WEBHOOK_URL:
+        return
     try:
         requests.post(WEBHOOK_URL, json=payload, timeout=5)
     except Exception as e:
@@ -155,21 +139,44 @@ def send_webhook(payload: dict):
             f.write(str(e) + "\n")
 
 # =====================================================
-# MAIN API ENDPOINT
+# TTS (SPEAK STEPS)
 # =====================================================
+
+@app.post("/speak-steps")
+def speak_steps(steps: list[str]):
+    combined = ". ".join(steps)
+
+    audio = client.audio.speech.create(
+        model="tts-1",
+        voice="alloy",
+        input=combined
+    )
+
+    out_path = "steps_tts.mp3"
+    with open(out_path, "wb") as f:
+        f.write(audio.read())
+
+    return FileResponse(out_path, media_type="audio/mpeg", filename="steps.mp3")
+
+# =====================================================
+# MAIN API
+# =====================================================
+
 @app.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...)):
 
-    allowed = (".wav", ".mp3", ".m4a")
-    if not file.filename.lower().endswith(allowed):
+    filename = file.filename.lower() if file.filename else ""
+
+    if not (
+        filename.endswith((".wav", ".mp3", ".m4a"))
+        or (file.content_type and file.content_type.startswith("audio/"))
+    ):
         return JSONResponse(
             status_code=400,
             content={"error": "Unsupported audio format"},
         )
 
-    # Keep correct suffix (important for some decoders)
-    suffix = os.path.splitext(file.filename)[1].lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         tmp.write(await file.read())
         audio_path = tmp.name
 
@@ -177,20 +184,24 @@ async def analyze_audio(file: UploadFile = File(...)):
     detected = detect_instructions(transcription)
 
     instructions_output = []
-    for instr in detected.get("instructions", []):
+
+    for instr in detected["instructions"]:
         steps = split_instruction_steps(instr)
-        instructions_output.append({"instruction": instr.capitalize(), "steps": steps})
+        instructions_output.append({
+            "instruction": instr.capitalize(),
+            "steps": steps
+        })
 
     result = {
         "transcription": transcription,
         "instructions": instructions_output,
         "meta": {
             "instruction_count": len(instructions_output),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-        },
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
     }
 
-    log_request(file.filename, result["meta"]["instruction_count"])
+    log_request(file.filename or "recorded_audio", result["meta"]["instruction_count"])
 
     if result["meta"]["instruction_count"] > 0:
         send_webhook(result)
