@@ -1,102 +1,272 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Record Instruction</title>
+  <title>Instruction Player</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+    }
+
+    #controls button {
+      margin: 4px;
+      padding: 8px 12px;
+      border: 1px solid #444;
+      background: #f0f0f0;
+      cursor: pointer;
+    }
+
+    #controls button.active {
+      background: #444;
+      color: #fff;
+    }
+
+    #sliderBox {
+      position: relative;
+      width: 500px;
+      margin-top: 10px;
+    }
+
+    #slider {
+      width: 500px;
+    }
+
+    .marker {
+      position: absolute;
+      top: -6px;
+      width: 2px;
+      height: 16px;
+      background: red;
+    }
+  </style>
 </head>
 <body>
 
-<h1>Record Instruction</h1>
+<h2>Instruction Audio Player</h2>
 
+<!-- RECORD -->
 <button onclick="startRecording()">🎙 Start Recording</button>
 <button onclick="stopRecording()">⏹ Stop Recording</button>
-<button onclick="resetAll()">🔄 Reset</button>
 
 <br><br>
 
+<!-- UPLOAD -->
 <input type="file" accept="audio/*" onchange="uploadFile(this.files[0])">
 
-<br><br>
+<hr>
 
-<button onclick="speakSteps()">🔊 Speak Steps</button>
+<!-- CONTROLS -->
+<div id="controls">
+  <button id="playBtn" onclick="togglePlay()">▶ Play</button>
+  <button id="prevBtn" onclick="prev()">⏮ Back</button>
+  <button id="nextBtn" onclick="next()">⏭ Forward</button>
+  <button id="repeatBtn" onclick="toggleRepeat()">🔁 Repeat One</button>
+  <button id="loopBtn" onclick="toggleLoop()">🔂 Loop All</button>
+</div>
+
+<div id="sliderBox">
+  <input id="slider" type="range" min="0" step="0.01" value="0">
+</div>
 
 <pre id="output"></pre>
 
 <script>
-let recorder;
-let chunks = [];
-let lastSteps = [];
+let recorder
+let chunks = []
+
+let audio = new Audio()
+let timeline = []
+let index = 0
+let totalDuration = 0
+
+let isPlaying = false
+let repeatOne = false
+let loopAll = false
+
+const slider = document.getElementById("slider")
+const sliderBox = document.getElementById("sliderBox")
+const output = document.getElementById("output")
+
+const playBtn = document.getElementById("playBtn")
+const repeatBtn = document.getElementById("repeatBtn")
+const loopBtn = document.getElementById("loopBtn")
+
+/* ================= RECORD ================= */
 
 async function startRecording() {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recorder = new MediaRecorder(stream);
-    chunks = [];
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  recorder = new MediaRecorder(stream)
+  chunks = []
 
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: "audio/wav" });
-        sendRecordedAudio(blob);
-    };
+  recorder.ondataavailable = e => chunks.push(e.data)
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: "audio/wav" })
+    const file = new File([blob], "recording.wav", { type: "audio/wav" })
+    sendAudioFile(file)
+  }
 
-    recorder.start();
+  recorder.start()
 }
 
 function stopRecording() {
-    if (recorder && recorder.state !== "inactive") {
-        recorder.stop();
-    }
+  if (recorder && recorder.state !== "inactive") recorder.stop()
 }
 
-function resetAll() {
-    document.getElementById("output").textContent = "";
-    lastSteps = [];
+/* ================= UPLOAD ================= */
+
+function uploadFile(file) {
+  if (!file) return
+  sendAudioFile(file)
 }
 
-async function uploadFile(file) {
-    sendAudioFile(file);
-}
-
-async function sendRecordedAudio(blob) {
-    const file = new File([blob], "recording.wav", { type: "audio/wav" });
-    sendAudioFile(file);
-}
+/* ================= SEND ================= */
 
 async function sendAudioFile(file) {
-    const form = new FormData();
-    form.append("file", file);
+  const form = new FormData()
+  form.append("file", file)
 
-    document.getElementById("output").textContent = "Processing...";
+  output.textContent = "Processing..."
 
-    const res = await fetch("/analyze-audio", {
-        method: "POST",
-        body: form
-    });
+  const res = await fetch("/analyze-audio", {
+    method: "POST",
+    body: form
+  })
 
-    const data = await res.json();
-    document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+  const data = await res.json()
+  output.textContent = JSON.stringify(data, null, 2)
 
-    lastSteps = [];
-    if (data.instructions) {
-        data.instructions.forEach(i => {
-            lastSteps.push(...i.steps);
-        });
-    }
+  timeline = data.timeline || []
+  totalDuration = timeline.length ? timeline[timeline.length - 1].end : 0
+
+  slider.max = totalDuration
+  drawMarkers()
+
+  resetPlayback()
 }
 
-async function speakSteps() {
-    if (lastSteps.length === 0) {
-        alert("No steps to speak");
-        return;
-    }
+/* ================= PLAYBACK CORE ================= */
 
-    const res = await fetch("/speak-steps", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lastSteps)
-    });
+function resetPlayback() {
+  index = 0
+  isPlaying = false
+  audio.pause()
+  if (timeline.length > 0) {
+    loadInstruction(0)
+  }
+  updateButtons()
+}
 
-    const blob = await res.blob();
-    const audio = new Audio(URL.createObjectURL(blob));
-    audio.play();
+function loadInstruction(i) {
+  index = i
+  audio.src = timeline[i].audio
+  audio.load()
+}
+
+function togglePlay() {
+  if (!audio.src) return
+
+  if (isPlaying) {
+    audio.pause()
+    isPlaying = false
+  } else {
+    audio.play()
+    isPlaying = true
+  }
+  updateButtons()
+}
+
+function next() {
+  if (index < timeline.length - 1) {
+    loadInstruction(index + 1)
+    audio.play()
+    isPlaying = true
+  }
+  updateButtons()
+}
+
+function prev() {
+  if (index > 0) {
+    loadInstruction(index - 1)
+    audio.play()
+    isPlaying = true
+  }
+  updateButtons()
+}
+
+/* ================= TOGGLES ================= */
+
+function toggleRepeat() {
+  repeatOne = !repeatOne
+  updateButtons()
+}
+
+function toggleLoop() {
+  loopAll = !loopAll
+  updateButtons()
+}
+
+/* ================= AUDIO EVENTS ================= */
+
+audio.ontimeupdate = () => {
+  slider.value = timeline[index].start + audio.currentTime
+}
+
+audio.onended = () => {
+  if (repeatOne) {
+    audio.currentTime = 0
+    audio.play()
+    return
+  }
+
+  if (index < timeline.length - 1) {
+    loadInstruction(index + 1)
+    audio.play()
+    return
+  }
+
+  if (loopAll && timeline.length > 0) {
+    loadInstruction(0)
+    audio.play()
+    return
+  }
+
+  isPlaying = false
+  updateButtons()
+}
+
+/* ================= SLIDER ================= */
+
+slider.oninput = e => {
+  const t = Number(e.target.value)
+  const i = timeline.findIndex(x => t >= x.start && t < x.end)
+  if (i !== -1) {
+    loadInstruction(i)
+    audio.currentTime = t - timeline[i].start
+    audio.play()
+    isPlaying = true
+    updateButtons()
+  }
+}
+
+/* ================= UI ================= */
+
+function updateButtons() {
+  playBtn.classList.toggle("active", isPlaying)
+  repeatBtn.classList.toggle("active", repeatOne)
+  loopBtn.classList.toggle("active", loopAll)
+
+  playBtn.textContent = isPlaying ? "⏸ Pause" : "▶ Play"
+}
+
+/* ================= MARKERS ================= */
+
+function drawMarkers() {
+  sliderBox.querySelectorAll(".marker").forEach(m => m.remove())
+  timeline.forEach(t => {
+    const m = document.createElement("div")
+    m.className = "marker"
+    m.style.left = (t.start / totalDuration) * 100 + "%"
+    sliderBox.appendChild(m)
+  })
 }
 </script>
 
