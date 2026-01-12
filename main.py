@@ -15,6 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
+AUDIO_DIR = BASE_DIR / "audio"
+AUDIO_DIR.mkdir(exist_ok=True)
+
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -38,7 +41,6 @@ from openai import OpenAI
 # =====================================================
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 THREAD_POOL = ThreadPoolExecutor(max_workers=8)
 
 WEBHOOK_ENABLED = os.getenv("WEBHOOK_ENABLED", "false").lower() == "true"
@@ -73,69 +75,84 @@ def mic_page():
         raise HTTPException(status_code=404, detail="mic.html not found")
     return mic_path.read_text(encoding="utf-8")
 
+@app.get("/audio/{fname}")
+def serve_audio(fname: str):
+    path = AUDIO_DIR / fname
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return FileResponse(path, media_type="audio/mpeg")
+
 # =====================================================
 # OPENAI BLOCKING FUNCTIONS (THREAD SAFE)
 # =====================================================
 
-def _transcribe_sync(audio_path: str) -> str:
+def _transcribe_sync(audio_path: str):
     with open(audio_path, "rb") as f:
-        text = client.audio.transcriptions.create(
+        return client.audio.transcriptions.create(
             file=f,
             model="whisper-1",
             language="en",
-            response_format="text",
+            response_format="verbose_json",
         )
-    return text.strip()
 
-async def transcribe_english(audio_path: str) -> str:
+async def transcribe_english(audio_path: str):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         THREAD_POOL, _transcribe_sync, audio_path
     )
 
-def _detect_instructions_sync(text: str) -> dict:
+def _detect_instructions_sync(segments) -> dict:
     system_prompt = """
-You extract instructional sentences from English speech.
+You extract instructional sentences from English speech segments.
+
+You MUST output valid JSON only.
 
 Rules:
 - Extract ALL instructional sentences
 - Preserve original order
 - Ignore greetings, names, fillers, closings
 - Do NOT merge unrelated commands
-- Output JSON only
+- Return segment indices
 
-Format:
+The output MUST be valid JSON in exactly this format:
+
 {
   "instructions": [
-    "instruction sentence 1",
-    "instruction sentence 2"
+    {
+      "text": "instruction sentence",
+      "segments": [0, 1, 2]
+    }
   ]
 }
-
-If none:
-{
-  "instructions": []
-}
 """
+
+    payload = json.dumps(
+        [{"i": i, "text": s.text} for i, s in enumerate(segments)]
+    )
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
-        ],
         temperature=0,
         response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": "Here are the speech segments in JSON:\n" + payload
+            },
+        ],
     )
+
     return json.loads(response.choices[0].message.content)
 
-async def detect_instructions(text: str) -> dict:
+async def detect_instructions(segments):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        THREAD_POOL, _detect_instructions_sync, text
+        THREAD_POOL, _detect_instructions_sync, segments
     )
 
 # =====================================================
-# INSTRUCTION POST-PROCESSING
+# INSTRUCTION POST-PROCESSING (UNCHANGED)
 # =====================================================
 
 def split_instruction_steps(instruction: str) -> List[str]:
@@ -153,7 +170,7 @@ def split_instruction_steps(instruction: str) -> List[str]:
     return steps
 
 # =====================================================
-# LOGGING & WEBHOOK
+# LOGGING & WEBHOOK (UNCHANGED)
 # =====================================================
 
 def log_request(filename: str, instruction_count: int):
@@ -171,35 +188,20 @@ def send_webhook(payload: dict):
             f.write(str(e) + "\n")
 
 # =====================================================
-# TTS
+# TTS PER INSTRUCTION
 # =====================================================
 
-def _tts_sync(text: str) -> str:
+def _tts_sync(text: str, idx: int) -> str:
     audio = client.audio.speech.create(
         model="tts-1",
         voice="alloy",
         input=text,
     )
-    out_path = "steps_tts.mp3"
+    fname = f"step_{idx}.mp3"
+    out_path = AUDIO_DIR / fname
     with open(out_path, "wb") as f:
         f.write(audio.read())
-    return out_path
-
-@app.post("/speak-steps")
-async def speak_steps(steps: List[str]):
-    if not steps:
-        raise HTTPException(status_code=400, detail="Steps list is empty")
-
-    loop = asyncio.get_event_loop()
-    out_path = await loop.run_in_executor(
-        THREAD_POOL, _tts_sync, ". ".join(steps)
-    )
-
-    return FileResponse(
-        out_path,
-        media_type="audio/mpeg",
-        filename="steps.mp3",
-    )
+    return fname
 
 # =====================================================
 # MAIN API
@@ -222,22 +224,45 @@ async def analyze_audio(file: UploadFile = File(...)):
         tmp.write(await file.read())
         audio_path = tmp.name
 
-    transcription = await transcribe_english(audio_path)
-    detected = await detect_instructions(transcription)
+    whisper = await transcribe_english(audio_path)
+
+    segments = whisper.segments
+    transcription_text = whisper.text
+
+    detected = await detect_instructions(segments)
 
     instructions_output = []
-    for instr in detected.get("instructions", []):
-        steps = split_instruction_steps(instr)
-        instructions_output.append(
-            {
-                "instruction": instr.capitalize(),
-                "steps": steps,
-            }
+    timeline = []
+    current_time = 0.0
+
+    for idx, instr in enumerate(detected.get("instructions", [])):
+        steps = split_instruction_steps(instr["text"])
+
+        segs = [segments[i] for i in instr["segments"]]
+        duration = sum(s.start <= s.end and (s.end - s.start) for s in segs)
+
+        audio_file = await asyncio.get_event_loop().run_in_executor(
+            THREAD_POOL, _tts_sync, instr["text"], idx
         )
 
+        timeline.append({
+            "instruction": instr["text"].capitalize(),
+            "audio": f"/audio/{audio_file}",
+            "start": round(current_time, 2),
+            "end": round(current_time + duration, 2),
+        })
+
+        instructions_output.append({
+            "instruction": instr["text"].capitalize(),
+            "steps": steps,
+        })
+
+        current_time += duration
+
     result = {
-        "transcription": transcription,
+        "transcription": transcription_text,
         "instructions": instructions_output,
+        "timeline": timeline,
         "meta": {
             "instruction_count": len(instructions_output),
             "timestamp": datetime.utcnow().isoformat() + "Z",
