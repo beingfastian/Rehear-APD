@@ -1,57 +1,61 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Instruction Player</title>
+  <title>Instruction Workspace</title>
   <style>
     body { font-family: Arial, sans-serif; }
 
-    #controls button {
+    button {
       margin: 4px;
-      padding: 8px 12px;
-      border: 1px solid #444;
-      background: #f0f0f0;
+      padding: 6px 10px;
       cursor: pointer;
     }
 
     #controls button.active {
       background: #444;
-      color: #fff;
-    }
-
-    #sliderBox {
-      position: relative;
-      width: 500px;
-      margin-top: 10px;
-    }
-
-    #slider { width: 500px; }
-
-    .marker {
-      position: absolute;
-      top: -6px;
-      width: 2px;
-      height: 16px;
-      background: red;
+      color: white;
     }
 
     .instruction {
+      margin-top: 16px;
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+
+    .instruction-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .step {
       display: flex;
       align-items: center;
-      margin: 6px 0;
+      margin-left: 20px;
+      margin-bottom: 4px;
     }
 
-    .speaker {
+    .step span {
+      margin-left: 8px;
+      margin-right: 12px;
+    }
+
+    .icon-btn {
+      font-size: 16px;
+      background: none;
+      border: none;
       cursor: pointer;
-      font-size: 18px;
-      margin-right: 8px;
     }
 
-    .speaker:hover { color: green; }
+    .icon-btn:hover {
+      color: green;
+    }
+
+    #slider { width: 500px; }
   </style>
 </head>
 <body>
 
-<h2>Instruction Audio Player</h2>
+<h2>Instruction Workspace</h2>
 
 <button onclick="startRecording()">🎙 Start Recording</button>
 <button onclick="stopRecording()">⏹ Stop Recording</button>
@@ -62,52 +66,46 @@
 
 <hr>
 
+<!-- GLOBAL PLAYER -->
 <div id="controls">
   <button id="playBtn" onclick="togglePlay()">▶ Play</button>
-  <button onclick="prev()">⏮ Back</button>
-  <button onclick="next()">⏭ Forward</button>
-  <button id="repeatBtn" onclick="toggleRepeat()">🔁 Repeat One</button>
-  <button id="loopBtn" onclick="toggleLoop()">🔂 Loop All</button>
+  <button onclick="prev()">⏮</button>
+  <button onclick="next()">⏭</button>
+  <button id="repeatBtn" onclick="toggleRepeat()">🔁</button>
+  <button id="loopBtn" onclick="toggleLoop()">🔂</button>
 </div>
 
-<div id="sliderBox">
-  <input id="slider" type="range" min="0" step="0.01">
-</div>
+<input id="slider" type="range" min="0" step="0.01">
 
-<h3>Instructions</h3>
-<div id="instructionList"></div>
+<hr>
+
+<h3>Instructions & Steps</h3>
+<div id="instructionContainer"></div>
 
 <pre id="output"></pre>
 
 <script>
 /* ================= AUDIO OBJECTS ================= */
-
-const mainAudio = new Audio()     // top bar playback
-const previewAudio = new Audio()  // speaker-only playback
+const mainAudio = new Audio()
+const stepAudio = new Audio()
 
 /* ================= STATE ================= */
-
 let timeline = []
+let instructions = []
 let index = 0
-let totalDuration = 0
-
 let isPlaying = false
 let repeatOne = false
 let loopAll = false
 
 /* ================= ELEMENTS ================= */
-
 const slider = document.getElementById("slider")
-const sliderBox = document.getElementById("sliderBox")
-const instructionList = document.getElementById("instructionList")
-const output = document.getElementById("output")
-
 const playBtn = document.getElementById("playBtn")
 const repeatBtn = document.getElementById("repeatBtn")
 const loopBtn = document.getElementById("loopBtn")
+const instructionContainer = document.getElementById("instructionContainer")
+const output = document.getElementById("output")
 
 /* ================= RECORD / UPLOAD ================= */
-
 let recorder, chunks=[]
 
 async function startRecording() {
@@ -116,8 +114,8 @@ async function startRecording() {
   chunks=[]
   recorder.ondataavailable=e=>chunks.push(e.data)
   recorder.onstop=()=>{
-    const f=new File([new Blob(chunks)],"recording.wav",{type:"audio/wav"})
-    sendAudioFile(f)
+    const file=new File([new Blob(chunks)],"recording.wav",{type:"audio/wav"})
+    sendAudioFile(file)
   }
   recorder.start()
 }
@@ -130,6 +128,7 @@ function uploadFile(file){
   if(file) sendAudioFile(file)
 }
 
+/* ================= SEND ================= */
 async function sendAudioFile(file){
   const fd=new FormData()
   fd.append("file",file)
@@ -141,65 +140,64 @@ async function sendAudioFile(file){
 
   output.textContent=JSON.stringify(data,null,2)
 
-  timeline=data.timeline||[]
-  totalDuration=timeline.length?timeline[timeline.length-1].end:0
-
-  slider.max=totalDuration
-  drawMarkers()
-  renderInstructionList()
-
-  resetPlayback()
+  instructions=data.instructions || []
+  renderInstructions()
 }
 
-/* ================= INSTRUCTION LIST ================= */
+/* ================= RENDER ================= */
+function renderInstructions(){
+  instructionContainer.innerHTML=""
 
-function renderInstructionList(){
-  instructionList.innerHTML=""
-  timeline.forEach((t,i)=>{
-    const row=document.createElement("div")
-    row.className="instruction"
+  instructions.forEach((instr, i)=>{
+    const box=document.createElement("div")
+    box.className="instruction"
 
-    const sp=document.createElement("span")
-    sp.className="speaker"
-    sp.textContent="🔊"
-    sp.onclick=()=>playPreview(i)
+    const title=document.createElement("div")
+    title.className="instruction-title"
+    title.textContent=instr.instruction
+    box.appendChild(title)
 
-    const txt=document.createElement("span")
-    txt.textContent=t.instruction
+    instr.steps.forEach(step=>{
+      const row=document.createElement("div")
+      row.className="step"
 
-    row.appendChild(sp)
-    row.appendChild(txt)
-    instructionList.appendChild(row)
+      const speak=document.createElement("button")
+      speak.className="icon-btn"
+      speak.textContent="🔊"
+      speak.onclick=()=>playStep(step.audio)
+
+      const text=document.createElement("span")
+      text.textContent=step.text
+
+      const download=document.createElement("a")
+      download.href=step.download
+      download.download=""
+      download.textContent="⬇️"
+      download.className="icon-btn"
+
+      row.appendChild(speak)
+      row.appendChild(text)
+      row.appendChild(download)
+
+      box.appendChild(row)
+    })
+
+    instructionContainer.appendChild(box)
   })
 }
 
-function playPreview(i){
-  previewAudio.pause()
-  previewAudio.src=timeline[i].audio
-  previewAudio.currentTime=0
-  previewAudio.play()
+/* ================= STEP AUDIO ================= */
+function playStep(src){
+  stepAudio.pause()
+  stepAudio.src=src
+  stepAudio.currentTime=0
+  stepAudio.play()
 }
 
-/* ================= MAIN PLAYBACK ================= */
-
-function resetPlayback(){
-  index=0
-  isPlaying=false
-  mainAudio.pause()
-  if(timeline.length>0){
-    load(index)
-  }
-  updateButtons()
-}
-
-function load(i){
-  index=i
-  mainAudio.src=timeline[i].audio
-  mainAudio.load()
-}
+/* ================= GLOBAL PLAYER (OPTIONAL) ================= */
+/* Kept minimal; your previous logic can be reattached if needed */
 
 function togglePlay(){
-  if(!mainAudio.src) return
   if(isPlaying){
     mainAudio.pause()
     isPlaying=false
@@ -210,25 +208,8 @@ function togglePlay(){
   updateButtons()
 }
 
-function next(){
-  if(index<timeline.length-1){
-    load(index+1)
-    mainAudio.play()
-    isPlaying=true
-  }
-  updateButtons()
-}
-
-function prev(){
-  if(index>0){
-    load(index-1)
-    mainAudio.play()
-    isPlaying=true
-  }
-  updateButtons()
-}
-
-/* ================= TOGGLES ================= */
+function prev(){}
+function next(){}
 
 function toggleRepeat(){
   repeatOne=!repeatOne
@@ -240,68 +221,10 @@ function toggleLoop(){
   updateButtons()
 }
 
-/* ================= EVENTS ================= */
-
-mainAudio.ontimeupdate=()=>{
-  slider.value=timeline[index].start+mainAudio.currentTime
-}
-
-mainAudio.onended=()=>{
-  if(repeatOne){
-    mainAudio.currentTime=0
-    mainAudio.play()
-    return
-  }
-
-  if(index<timeline.length-1){
-    load(index+1)
-    mainAudio.play()
-    return
-  }
-
-  if(loopAll){
-    load(0)
-    mainAudio.play()
-    return
-  }
-
-  isPlaying=false
-  updateButtons()
-}
-
-/* ================= SLIDER ================= */
-
-slider.oninput=e=>{
-  const t=+e.target.value
-  const i=timeline.findIndex(x=>t>=x.start&&t<x.end)
-  if(i!==-1){
-    load(i)
-    mainAudio.currentTime=t-timeline[i].start
-    mainAudio.play()
-    isPlaying=true
-    updateButtons()
-  }
-}
-
-/* ================= UI ================= */
-
 function updateButtons(){
   playBtn.classList.toggle("active",isPlaying)
   repeatBtn.classList.toggle("active",repeatOne)
   loopBtn.classList.toggle("active",loopAll)
-  playBtn.textContent=isPlaying?"⏸ Pause":"▶ Play"
-}
-
-/* ================= MARKERS ================= */
-
-function drawMarkers(){
-  sliderBox.querySelectorAll(".marker").forEach(m=>m.remove())
-  timeline.forEach(t=>{
-    const m=document.createElement("div")
-    m.className="marker"
-    m.style.left=(t.start/totalDuration)*100+"%"
-    sliderBox.appendChild(m)
-  })
 }
 </script>
 
