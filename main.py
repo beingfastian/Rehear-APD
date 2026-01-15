@@ -80,10 +80,10 @@ def serve_audio(fname: str):
     path = AUDIO_DIR / fname
     if not path.exists():
         raise HTTPException(status_code=404, detail="Audio not found")
-    return FileResponse(path, media_type="audio/mpeg")
+    return FileResponse(path, media_type="audio/mpeg", filename=fname)
 
 # =====================================================
-# OPENAI BLOCKING FUNCTIONS (THREAD SAFE)
+# OPENAI BLOCKING FUNCTIONS
 # =====================================================
 
 def _transcribe_sync(audio_path: str):
@@ -114,13 +114,13 @@ Rules:
 - Do NOT merge unrelated commands
 - Return segment indices
 
-The output MUST be valid JSON in exactly this format:
+Output JSON format:
 
 {
   "instructions": [
     {
       "text": "instruction sentence",
-      "segments": [0, 1, 2]
+      "segments": [0,1]
     }
   ]
 }
@@ -136,10 +136,7 @@ The output MUST be valid JSON in exactly this format:
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": "Here are the speech segments in JSON:\n" + payload
-            },
+            {"role": "user", "content": "Segments in JSON:\n" + payload},
         ],
     )
 
@@ -152,7 +149,7 @@ async def detect_instructions(segments):
     )
 
 # =====================================================
-# INSTRUCTION POST-PROCESSING (UNCHANGED)
+# STEP LOGIC
 # =====================================================
 
 def split_instruction_steps(instruction: str) -> List[str]:
@@ -169,39 +166,15 @@ def split_instruction_steps(instruction: str) -> List[str]:
 
     return steps
 
-# =====================================================
-# LOGGING & WEBHOOK (UNCHANGED)
-# =====================================================
-
-def log_request(filename: str, instruction_count: int):
-    ts = datetime.utcnow().isoformat() + "Z"
-    with open("requests.log", "a", encoding="utf-8") as f:
-        f.write(f"{ts} | file={filename} | instructions={instruction_count}\n")
-
-def send_webhook(payload: dict):
-    if not WEBHOOK_ENABLED or not WEBHOOK_URL:
-        return
-    try:
-        requests.post(WEBHOOK_URL, json=payload, timeout=5)
-    except Exception as e:
-        with open("webhook_errors.log", "a", encoding="utf-8") as f:
-            f.write(str(e) + "\n")
-
-# =====================================================
-# TTS PER INSTRUCTION
-# =====================================================
-
-def _tts_sync(text: str, idx: int) -> str:
+def _tts_step_sync(text: str, fname: str):
     audio = client.audio.speech.create(
         model="tts-1",
         voice="alloy",
         input=text,
     )
-    fname = f"step_{idx}.mp3"
-    out_path = AUDIO_DIR / fname
-    with open(out_path, "wb") as f:
+    path = AUDIO_DIR / fname
+    with open(path, "wb") as f:
         f.write(audio.read())
-    return fname
 
 # =====================================================
 # MAIN API
@@ -209,69 +182,52 @@ def _tts_sync(text: str, idx: int) -> str:
 
 @app.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...)):
-    filename = file.filename.lower() if file.filename else ""
-
-    if not (
-        filename.endswith((".wav", ".mp3", ".m4a"))
-        or (file.content_type and file.content_type.startswith("audio/"))
-    ):
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Unsupported audio format"},
-        )
+    filename = file.filename or "audio"
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         tmp.write(await file.read())
         audio_path = tmp.name
 
     whisper = await transcribe_english(audio_path)
-
     segments = whisper.segments
     transcription_text = whisper.text
 
     detected = await detect_instructions(segments)
 
     instructions_output = []
-    timeline = []
-    current_time = 0.0
 
-    for idx, instr in enumerate(detected.get("instructions", [])):
+    for instr_idx, instr in enumerate(detected.get("instructions", [])):
         steps = split_instruction_steps(instr["text"])
+        step_objects = []
 
-        segs = [segments[i] for i in instr["segments"]]
-        duration = sum(s.start <= s.end and (s.end - s.start) for s in segs)
+        for step_idx, step_text in enumerate(steps):
+            audio_name = f"instr_{instr_idx}_step_{step_idx}.mp3"
 
-        audio_file = await asyncio.get_event_loop().run_in_executor(
-            THREAD_POOL, _tts_sync, instr["text"], idx
-        )
+            await asyncio.get_event_loop().run_in_executor(
+                THREAD_POOL,
+                _tts_step_sync,
+                step_text,
+                audio_name,
+            )
 
-        timeline.append({
-            "instruction": instr["text"].capitalize(),
-            "audio": f"/audio/{audio_file}",
-            "start": round(current_time, 2),
-            "end": round(current_time + duration, 2),
-        })
+            step_objects.append({
+                "text": step_text,
+                "audio": f"/audio/{audio_name}",
+                "download": f"/audio/{audio_name}",
+            })
 
         instructions_output.append({
             "instruction": instr["text"].capitalize(),
-            "steps": steps,
+            "steps": step_objects,
         })
-
-        current_time += duration
 
     result = {
         "transcription": transcription_text,
         "instructions": instructions_output,
-        "timeline": timeline,
         "meta": {
             "instruction_count": len(instructions_output),
             "timestamp": datetime.utcnow().isoformat() + "Z",
         },
     }
-
-    log_request(file.filename or "recorded_audio", result["meta"]["instruction_count"])
-
-    if result["meta"]["instruction_count"] > 0:
-        send_webhook(result)
 
     return result
