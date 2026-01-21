@@ -4,3 +4,4 @@ __pycache__/
 requests.log
 webhook_errors.log
 steps_tts.mp3
+instruction-api-key.pem
