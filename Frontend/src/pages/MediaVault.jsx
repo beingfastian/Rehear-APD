@@ -1,10 +1,17 @@
-import React from 'react';
+// Frontend/src/pages/MediaVault.jsx
+
+import React, { useState } from 'react';
 import { Filter, Grid } from 'lucide-react';
+import { useApp } from '../context/AppContext';
 import Table from '../components/shared/Table';
 import Pagination from '../components/shared/Pagination';
-import { allRecordings } from '../data/sampleData';
+import FileUpload from '../components/shared/FileUpload';
 
-const MediaVault = ({ setSelectedFile, setCurrentPage }) => {
+const MediaVault = ({ setCurrentPage }) => {
+  const { jobs, setCurrentJob } = useApp();
+  const [itemsPerPage] = useState(10);
+  const [currentPageNum, setCurrentPageNum] = useState(1);
+
   const columns = [
     { key: 'name', label: 'File Name & Format' },
     { key: 'type', label: 'Processing Type' },
@@ -14,7 +21,12 @@ const MediaVault = ({ setSelectedFile, setCurrentPage }) => {
   ];
 
   const handleRowClick = (item) => {
-    setSelectedFile(item);
+    setCurrentJob(item);
+    setCurrentPage('segment');
+  };
+
+  const handleUploadSuccess = (job) => {
+    setCurrentJob(job);
     setCurrentPage('segment');
   };
 
@@ -44,6 +56,11 @@ const MediaVault = ({ setSelectedFile, setCurrentPage }) => {
     </>
   );
 
+  // Paginate jobs
+  const startIndex = (currentPageNum - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedJobs = jobs.slice(startIndex, endIndex);
+
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">
@@ -53,26 +70,37 @@ const MediaVault = ({ setSelectedFile, setCurrentPage }) => {
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">
-            All Audio Recordings
+            All Audio Recordings ({jobs.length})
           </h3>
 
           <div className="flex gap-2 items-center">
             <Filter className="w-5 h-5 text-gray-400 cursor-pointer" />
             <Grid className="w-5 h-5 text-gray-400 cursor-pointer" />
-            <button className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600">
-              Upload New Recording
-            </button>
+            <FileUpload onSuccess={handleUploadSuccess} />
           </div>
         </div>
 
-        <Table
-          columns={columns}
-          data={allRecordings}
-          renderRow={renderRow}
-          onRowClick={handleRowClick}
-        />
+        {paginatedJobs.length > 0 ? (
+          <>
+            <Table
+              columns={columns}
+              data={paginatedJobs}
+              renderRow={renderRow}
+              onRowClick={handleRowClick}
+            />
 
-        <Pagination totalItems={allRecordings.length} currentPage={1} />
+            <Pagination
+              totalItems={jobs.length}
+              currentPage={currentPageNum}
+              itemsPerPage={itemsPerPage}
+            />
+          </>
+        ) : (
+          <div className="px-6 py-12 text-center">
+            <p className="text-gray-500 mb-4">No recordings yet. Upload your first audio file!</p>
+            <FileUpload onSuccess={handleUploadSuccess} />
+          </div>
+        )}
       </div>
     </div>
   );

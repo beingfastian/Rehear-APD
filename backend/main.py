@@ -1,6 +1,4 @@
-# =====================================================
-# ENV LOAD
-# =====================================================
+# backend/main.py - CORS FIX
 
 import os
 import asyncio
@@ -27,19 +25,11 @@ AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
-# =====================================================
-# IMPORTS
-# =====================================================
-
 import boto3
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
-
-# =====================================================
-# GLOBALS
-# =====================================================
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -52,28 +42,39 @@ s3 = boto3.client(
 
 THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
-# =====================================================
-# APP
-# =====================================================
-
 app = FastAPI(title="Instruction API")
 
+# =====================================================
+# CORS CONFIGURATION - CRITICAL FIX
+# =====================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",  # Alternative port
+        "*"  # Allow all for development - REMOVE IN PRODUCTION
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # =====================================================
-# ROUTES
+# HEALTH CHECK
 # =====================================================
-
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "message": "Audio Instruction API is running",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
+# =====================================================
+# MIC PAGE
+# =====================================================
 @app.get("/mic", response_class=HTMLResponse)
 def mic_page():
     mic_path = BASE_DIR / "mic.html"
@@ -84,7 +85,6 @@ def mic_page():
 # =====================================================
 # OPENAI HELPERS
 # =====================================================
-
 def _transcribe_sync(path: str) -> str:
     with open(path, "rb") as f:
         text = client.audio.transcriptions.create(
@@ -133,10 +133,6 @@ async def detect(text: str) -> dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(THREAD_POOL, _detect_sync, text)
 
-# =====================================================
-# ENGLISH NORMALIZER (FOR TTS)
-# =====================================================
-
 def enforce_english(text: str) -> str:
     prompt = f"""
 You are a strict English normalizer.
@@ -159,10 +155,6 @@ Input:
         temperature=0
     )
     return res.choices[0].message.content.strip()
-
-# =====================================================
-# PROCESSING
-# =====================================================
 
 def split_steps(text: str) -> List[str]:
     text = text.lower()
@@ -200,51 +192,93 @@ def tts_to_s3(text: str, job_id: str, i: int, j: int):
     return f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
 
 # =====================================================
-# MAIN API
+# MAIN API ENDPOINT
 # =====================================================
-
 @app.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...)):
-    if not (
-        file.content_type
-        and file.content_type.startswith("audio/")
-    ):
-        return JSONResponse(400, {"error": "Unsupported file type"})
+    """
+    Analyze uploaded audio file and return transcription + instruction steps
+    """
+    print(f"[INFO] Received file: {file.filename}, content_type: {file.content_type}")
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Unsupported file type. Please upload an audio file."}
+        )
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(await file.read())
-        path = tmp.name
+    try:
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            path = tmp.name
+            print(f"[INFO] Saved to temp file: {path}, size: {len(content)} bytes")
 
-    transcription = await transcribe(path)
-    detected = await detect(transcription)
+        # Transcribe
+        print("[INFO] Starting transcription...")
+        transcription = await transcribe(path)
+        print(f"[INFO] Transcription complete: {transcription[:100]}...")
 
-    job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    output = []
+        # Detect instructions
+        print("[INFO] Detecting instructions...")
+        detected = await detect(transcription)
+        print(f"[INFO] Detected {len(detected.get('instructions', []))} instructions")
 
-    for i, instr in enumerate(detected.get("instructions", [])):
-        steps = split_steps(instr)
-        step_data = []
+        # Generate job ID
+        job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        output = []
 
-        for j, step in enumerate(steps):
-            url = tts_to_s3(step, job_id, i, j)
-            step_data.append({
-                "text": step,
-                "audio": url,
-                "download": url,
-                "s3_key": f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
+        # Process each instruction
+        for i, instr in enumerate(detected.get("instructions", [])):
+            steps = split_steps(instr)
+            step_data = []
+
+            for j, step in enumerate(steps):
+                print(f"[INFO] Generating TTS for step {i}-{j}: {step}")
+                url = tts_to_s3(step, job_id, i, j)
+                step_data.append({
+                    "text": step,
+                    "audio": url,
+                    "download": url,
+                    "s3_key": f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
+                })
+
+            output.append({
+                "instruction": instr.capitalize(),
+                "steps": step_data
             })
 
-        output.append({
-            "instruction": instr.capitalize(),
-            "steps": step_data
-        })
+        print(f"[INFO] Processing complete for job {job_id}")
 
-    return {
-        "job_id": job_id,
-        "transcription": transcription,
-        "instructions": output,
-        "meta": {
-            "instruction_count": len(output),
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+        return {
+            "job_id": job_id,
+            "transcription": transcription,
+            "instructions": output,
+            "meta": {
+                "instruction_count": len(output),
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
         }
-    }
+
+    except Exception as e:
+        print(f"[ERROR] Processing failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Cleanup temp file
+        try:
+            os.unlink(path)
+        except:
+            pass
+
+
+# =====================================================
+# RUN SERVER
+# =====================================================
+if __name__ == "__main__":
+    import uvicorn
+    print("Starting server on http://localhost:10000")
+    uvicorn.run(app, host="0.0.0.0", port=10000)

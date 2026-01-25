@@ -1,0 +1,118 @@
+// Frontend/src/components/shared/MicRecorder.jsx
+
+import React, { useState, useRef } from 'react';
+import { Mic, Square, Loader2 } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
+
+const MicRecorder = ({ onSuccess }) => {
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const timerRef = useRef(null);
+  const { processRecording, isProcessing } = useApp();
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      chunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(chunksRef.current, { type: 'audio/wav' });
+        
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+        
+        try {
+          const job = await processRecording(audioBlob);
+          if (onSuccess) {
+            onSuccess(job);
+          }
+        } catch (error) {
+          console.error('Processing failed:', error);
+        }
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+
+    } catch (error) {
+      console.error('Microphone access denied:', error);
+      alert('Please allow microphone access to record audio');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    }
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="flex items-center gap-4">
+      {!isRecording ? (
+        <button
+          onClick={startRecording}
+          disabled={isProcessing}
+          className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+            isProcessing
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'border border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          <Mic className="w-4 h-4" />
+          Start Recording
+        </button>
+      ) : (
+        <div className="flex items-center gap-4">
+          <button
+            onClick={stopRecording}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-red-600 transition-all"
+          >
+            <Square className="w-4 h-4" />
+            Stop Recording
+          </button>
+          
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+            <span className="text-sm font-mono text-gray-700">{formatTime(recordingTime)}</span>
+          </div>
+        </div>
+      )}
+
+      {isProcessing && (
+        <div className="flex items-center gap-2 text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm">Processing recording...</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MicRecorder;
