@@ -56,7 +56,7 @@ const FileUpload = ({ onSuccess }) => {
       <button
         onClick={handleClick}
         disabled={isProcessing}
-        className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+        className={`w-full sm:w-auto px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all ${
           isProcessing
             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
             : 'bg-blue-500 text-white hover:bg-blue-600'
@@ -64,24 +64,25 @@ const FileUpload = ({ onSuccess }) => {
       >
         {isProcessing ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Processing... {processingProgress}%
+            <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" />
+            <span className="hidden sm:inline">Processing... {processingProgress}%</span>
+            <span className="sm:hidden">{processingProgress}%</span>
           </>
         ) : (
           <>
-            <Upload className="w-4 h-4" />
+            <Upload className="w-3 h-3 sm:w-4 sm:h-4" />
             Upload file
           </>
         )}
       </button>
 
       {isProcessing && (
-        <div className="mt-4">
+        <div className="mt-3 sm:mt-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-gray-600">Processing audio...</span>
-            <span className="text-sm font-medium text-gray-900">{processingProgress}%</span>
+            <span className="text-xs sm:text-sm text-gray-600">Processing audio...</span>
+            <span className="text-xs sm:text-sm font-medium text-gray-900">{processingProgress}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
+          <div className="w-full bg-gray-200 rounded-full h-1.5 sm:h-2">
             <div
               className="bg-blue-500 h-2 rounded-full transition-all duration-300"
               style={{ width: `${processingProgress}%` }}

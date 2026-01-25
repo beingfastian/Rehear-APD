@@ -62,21 +62,23 @@ const MediaVault = ({ setCurrentPage }) => {
   const paginatedJobs = jobs.slice(startIndex, endIndex);
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">
+    <div className="p-4 sm:p-6">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 sm:mb-6">
         Media Vault
       </h1>
 
       <div className="bg-white rounded-lg border border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <h3 className="font-semibold text-gray-900 text-sm sm:text-base">
             All Audio Recordings ({jobs.length})
           </h3>
 
-          <div className="flex gap-2 items-center">
-            <Filter className="w-5 h-5 text-gray-400 cursor-pointer" />
-            <Grid className="w-5 h-5 text-gray-400 cursor-pointer" />
-            <FileUpload onSuccess={handleUploadSuccess} />
+          <div className="flex gap-2 items-center w-full sm:w-auto">
+            <Filter className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 cursor-pointer" />
+            <Grid className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 cursor-pointer" />
+            <div className="flex-1 sm:flex-initial">
+              <FileUpload onSuccess={handleUploadSuccess} />
+            </div>
           </div>
         </div>
 
@@ -96,8 +98,8 @@ const MediaVault = ({ setCurrentPage }) => {
             />
           </>
         ) : (
-          <div className="px-6 py-12 text-center">
-            <p className="text-gray-500 mb-4">No recordings yet. Upload your first audio file!</p>
+          <div className="px-4 sm:px-6 py-8 sm:py-12 text-center">
+            <p className="text-gray-500 mb-4 text-sm sm:text-base">No recordings yet. Upload your first audio file!</p>
             <FileUpload onSuccess={handleUploadSuccess} />
           </div>
         )}

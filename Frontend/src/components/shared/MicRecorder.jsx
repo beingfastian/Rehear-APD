@@ -74,41 +74,41 @@ const MicRecorder = ({ onSuccess }) => {
   };
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full">
       {!isRecording ? (
         <button
           onClick={startRecording}
           disabled={isProcessing}
-          className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+          className={`w-full sm:w-auto px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-all ${
             isProcessing
               ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
               : 'border border-gray-300 hover:bg-gray-50'
           }`}
         >
-          <Mic className="w-4 h-4" />
+          <Mic className="w-3 h-3 sm:w-4 sm:h-4" />
           Start Recording
         </button>
       ) : (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full">
           <button
             onClick={stopRecording}
-            className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-red-600 transition-all"
+            className="w-full sm:w-auto px-3 sm:px-4 py-2 bg-red-500 text-white rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 hover:bg-red-600 transition-all"
           >
-            <Square className="w-4 h-4" />
+            <Square className="w-3 h-3 sm:w-4 sm:h-4" />
             Stop Recording
           </button>
           
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-            <span className="text-sm font-mono text-gray-700">{formatTime(recordingTime)}</span>
+          <div className="flex items-center justify-center gap-2 py-2 sm:py-0">
+            <div className="w-2 h-2 sm:w-3 sm:h-3 bg-red-500 rounded-full animate-pulse" />
+            <span className="text-xs sm:text-sm font-mono text-gray-700">{formatTime(recordingTime)}</span>
           </div>
         </div>
       )}
 
       {isProcessing && (
-        <div className="flex items-center gap-2 text-blue-600">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Processing recording...</span>
+        <div className="flex items-center justify-center gap-2 text-blue-600 py-2 sm:py-0">
+          <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" />
+          <span className="text-xs sm:text-sm">Processing recording...</span>
         </div>
       )}
     </div>

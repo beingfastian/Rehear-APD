@@ -43,20 +43,20 @@ const Dashboard = ({ setCurrentPage }) => {
   };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">
+    <div className="p-4 sm:p-6">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 sm:mb-6">
         Dashboard Overview
       </h1>
 
       {/* Welcome Card with Real Stats */}
-      <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl p-6 mb-6">
-        <div className="flex items-start justify-between mb-2">
-          <h2 className="text-xl font-semibold text-gray-900">
+      <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl p-4 sm:p-6 mb-4 sm:mb-6">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-2 mb-2">
+          <h2 className="text-lg sm:text-xl font-semibold text-gray-900">
             Welcome back, Shaun! Ready to transform your audio?
           </h2>
           
           {/* Backend Status Indicator */}
-          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
             backendStatus === 'online' 
               ? 'bg-green-100 text-green-700' 
               : backendStatus === 'offline'
@@ -79,11 +79,11 @@ const Dashboard = ({ setCurrentPage }) => {
           </div>
         </div>
         
-        <p className="text-gray-600 text-sm mb-6">
+        <p className="text-gray-600 text-xs sm:text-sm mb-4 sm:mb-6">
           Upload your recordings to generate instant transcripts, AI-powered summaries, and instructional chunks. Your API is currently active and ready for processing.
         </p>
         
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div className="bg-white rounded-lg p-4 flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
               <Mic className="w-5 h-5 text-blue-600" />
@@ -113,7 +113,7 @@ const Dashboard = ({ setCurrentPage }) => {
       </div>
 
       {/* Action Cards with Actual Functionality */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <ActionCard
           icon={FileText}
           title="Instructional Chunks"
@@ -148,6 +148,7 @@ const Dashboard = ({ setCurrentPage }) => {
 
       {/* Recent Activity with Real Data */}
       <RecentActivityTable data={recentActivity} />
+      
     </div>
   );
 };

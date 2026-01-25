@@ -40,18 +40,18 @@ const Notification = ({ message, type = 'info', onClose }) => {
   const { icon: Icon, bgColor, borderColor, textColor, iconColor } = config[type];
 
   return (
-    <div className="fixed top-4 right-4 z-50 animate-slide-in">
-      <div className={`${bgColor} border ${borderColor} rounded-lg p-4 shadow-lg max-w-md flex items-start gap-3`}>
-        <Icon className={`w-5 h-5 ${iconColor} flex-shrink-0 mt-0.5`} />
-        <div className="flex-1">
-          <p className={`text-sm font-medium ${textColor}`}>{message}</p>
+    <div className="fixed top-4 right-4 left-4 sm:left-auto z-50 animate-slide-in">
+      <div className={`${bgColor} border ${borderColor} rounded-lg p-3 sm:p-4 shadow-lg max-w-md mx-auto sm:mx-0 flex items-start gap-2 sm:gap-3`}>
+        <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${iconColor} flex-shrink-0 mt-0.5`} />
+        <div className="flex-1 min-w-0">
+          <p className={`text-xs sm:text-sm font-medium ${textColor}`}>{message}</p>
         </div>
         {onClose && (
           <button
             onClick={onClose}
-            className={`${textColor} hover:opacity-70 transition-opacity`}
+            className={`${textColor} hover:opacity-70 transition-opacity flex-shrink-0`}
           >
-            <XCircle className="w-4 h-4" />
+            <XCircle className="w-3 h-3 sm:w-4 sm:h-4" />
           </button>
         )}
       </div>
