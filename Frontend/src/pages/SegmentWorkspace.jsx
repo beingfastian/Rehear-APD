@@ -1,7 +1,7 @@
 // Frontend/src/pages/SegmentWorkspace.jsx
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Search, Play, Pause, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { Mic, Search, Play, Pause, ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
 
@@ -11,6 +11,8 @@ const SegmentWorkspace = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [audioError, setAudioError] = useState(null);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const audioRef = useRef(new Audio());
 
   // Flatten all steps for playback
@@ -28,11 +30,27 @@ const SegmentWorkspace = () => {
   // Load audio when step changes
   useEffect(() => {
     if (currentStep?.audio) {
+      setIsLoadingAudio(true);
+      setAudioError(null);
+      
+      // Configure audio element
+      audioRef.current.crossOrigin = "anonymous";
+      audioRef.current.preload = "auto";
       audioRef.current.src = currentStep.audio;
       audioRef.current.load();
 
+      audioRef.current.onloadstart = () => {
+        console.log('[Audio] Loading started:', currentStep.audio);
+      };
+
+      audioRef.current.onloadeddata = () => {
+        console.log('[Audio] Data loaded');
+        setIsLoadingAudio(false);
+      };
+
       audioRef.current.onloadedmetadata = () => {
         setDuration(audioRef.current.duration);
+        console.log('[Audio] Duration:', audioRef.current.duration);
       };
 
       audioRef.current.ontimeupdate = () => {
@@ -48,6 +66,17 @@ const SegmentWorkspace = () => {
           }, 500);
         }
       };
+
+      audioRef.current.onerror = (e) => {
+        console.error('[Audio] Error loading:', e);
+        setAudioError('Failed to load audio. Please check your S3 CORS configuration.');
+        setIsLoadingAudio(false);
+        setIsPlaying(false);
+      };
+
+      audioRef.current.oncanplay = () => {
+        console.log('[Audio] Can play');
+      };
     }
 
     return () => {
@@ -56,17 +85,39 @@ const SegmentWorkspace = () => {
   }, [currentStep, currentStepIndex, allSteps.length]);
 
   const togglePlay = () => {
+    if (audioError) {
+      alert('Cannot play audio: ' + audioError);
+      return;
+    }
+
     if (isPlaying) {
       audioRef.current.pause();
+      setIsPlaying(false);
     } else {
-      audioRef.current.play();
+      const playPromise = audioRef.current.play();
+      
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true);
+            console.log('[Audio] Playing successfully');
+          })
+          .catch(err => {
+            console.error('[Audio] Play error:', err);
+            setAudioError('Playback failed: ' + err.message);
+            setIsPlaying(false);
+          });
+      }
     }
-    setIsPlaying(!isPlaying);
   };
 
   const playStep = (index) => {
     setCurrentStepIndex(index);
-    setIsPlaying(true);
+    // Will auto-play after audio loads if was playing
+    if (isPlaying) {
+      setIsPlaying(false);
+      setTimeout(() => setIsPlaying(true), 300);
+    }
   };
 
   const previousStep = () => {
@@ -101,15 +152,29 @@ const SegmentWorkspace = () => {
   };
 
   const handleDownloadStep = async (audioUrl, stepText) => {
-    const filename = `${stepText.slice(0, 30).replace(/[^a-z0-9]/gi, '_')}.mp3`;
-    await apiService.downloadAudio(audioUrl, filename);
+    try {
+      const filename = `${stepText.slice(0, 30).replace(/[^a-z0-9]/gi, '_')}.mp3`;
+      await apiService.downloadAudio(audioUrl, filename);
+    } catch (error) {
+      alert('Download failed: ' + error.message);
+    }
+  };
+
+  const seekToPosition = (e) => {
+    const progressBar = e.currentTarget;
+    const rect = progressBar.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = x / rect.width;
+    audioRef.current.currentTime = percentage * duration;
   };
 
   if (!currentJob) {
     return (
       <div className="p-4 sm:p-6">
         <div className="text-center py-8 sm:py-12">
-          <p className="text-gray-500 text-sm sm:text-base">No job selected. Please select a recording from Media Vault.</p>
+          <p className="text-gray-500 text-sm sm:text-base">
+            No job selected. Please select a recording from Media Vault.
+          </p>
         </div>
       </div>
     );
@@ -145,8 +210,20 @@ const SegmentWorkspace = () => {
 
           {/* Audio Player - Shown first on mobile */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 lg:order-last">
+            
+            {/* Error Display */}
+            {audioError && (
+              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                {audioError}
+              </div>
+            )}
+
+            {/* Progress Bar */}
             <div className="flex items-center gap-2 sm:gap-4 mb-3 sm:mb-4">
-              <div className="flex-1 bg-gray-200 rounded-full h-2 cursor-pointer">
+              <div 
+                className="flex-1 bg-gray-200 rounded-full h-2 cursor-pointer"
+                onClick={seekToPosition}
+              >
                 <div 
                   className="bg-blue-500 h-2 rounded-full transition-all" 
                   style={{ width: `${(currentTime / duration) * 100 || 0}%` }} 
@@ -154,22 +231,42 @@ const SegmentWorkspace = () => {
               </div>
             </div>
 
+            {/* Playback Controls */}
             <div className="flex items-center justify-center gap-3 sm:gap-4">
-              <button onClick={previousStep} disabled={currentStepIndex === 0}>
-                <ChevronLeft className={`w-5 h-5 sm:w-6 sm:h-6 ${currentStepIndex === 0 ? 'text-gray-300' : 'text-gray-600 cursor-pointer'}`} />
+              <button 
+                onClick={previousStep} 
+                disabled={currentStepIndex === 0 || isLoadingAudio}
+              >
+                <ChevronLeft className={`w-5 h-5 sm:w-6 sm:h-6 ${
+                  currentStepIndex === 0 || isLoadingAudio
+                    ? 'text-gray-300' 
+                    : 'text-gray-600 cursor-pointer hover:text-blue-600'
+                }`} />
               </button>
-              <button onClick={togglePlay}>
-                {isPlaying ? (
-                  <Pause className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600" />
+              
+              <button onClick={togglePlay} disabled={isLoadingAudio}>
+                {isLoadingAudio ? (
+                  <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin text-blue-600" />
+                ) : isPlaying ? (
+                  <Pause className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600 hover:text-blue-700" />
                 ) : (
-                  <Play className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600" />
+                  <Play className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600 hover:text-blue-700" />
                 )}
               </button>
-              <button onClick={nextStep} disabled={currentStepIndex === allSteps.length - 1}>
-                <ChevronRight className={`w-5 h-5 sm:w-6 sm:h-6 ${currentStepIndex === allSteps.length - 1 ? 'text-gray-300' : 'text-gray-600 cursor-pointer'}`} />
+              
+              <button 
+                onClick={nextStep} 
+                disabled={currentStepIndex === allSteps.length - 1 || isLoadingAudio}
+              >
+                <ChevronRight className={`w-5 h-5 sm:w-6 sm:h-6 ${
+                  currentStepIndex === allSteps.length - 1 || isLoadingAudio
+                    ? 'text-gray-300' 
+                    : 'text-gray-600 cursor-pointer hover:text-blue-600'
+                }`} />
               </button>
             </div>
 
+            {/* Time Display */}
             <div className="flex flex-col sm:flex-row justify-between items-center mt-3 sm:mt-4 gap-2 text-xs sm:text-sm text-gray-600">
               <span className="font-mono">{formatTime(currentTime)}</span>
               <span className="text-center text-xs text-gray-500 px-2">
@@ -179,15 +276,18 @@ const SegmentWorkspace = () => {
             </div>
           </div>
 
+          {/* Download Transcript Button */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <button 
               onClick={handleDownloadTranscript}
-              className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-gray-50 mb-3 sm:mb-4"
+              className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-gray-50 flex items-center justify-center gap-2"
             >
+              <Download className="w-4 h-4" />
               Download Full Transcript
             </button>
           </div>
 
+          {/* Transcription Search and Display */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <div className="relative mb-4">
               <Search className="w-4 h-4 sm:w-5 sm:h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -257,9 +357,16 @@ const SegmentWorkspace = () => {
                         e.stopPropagation();
                         playStep(index);
                       }}
-                      className="flex-1 px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-500 text-white rounded text-xs sm:text-sm hover:bg-blue-600 flex items-center justify-center gap-1"
+                      disabled={isLoadingAudio && index === currentStepIndex}
+                      className="flex-1 px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-500 text-white rounded text-xs sm:text-sm hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-1"
                     >
-                      <Play className="w-3 h-3 sm:w-4 sm:h-4" /> Play
+                      {isLoadingAudio && index === currentStepIndex ? (
+                        <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Play className="w-3 h-3 sm:w-4 sm:h-4" /> Play
+                        </>
+                      )}
                     </button>
                     <button 
                       onClick={(e) => {

@@ -36,6 +36,7 @@ class ApiService {
 
       const data = await response.json();
       console.log('[API] Success! Job ID:', data.job_id);
+      console.log('[API] Data saved to database:', data.meta?.saved_to_db);
       return data;
 
     } catch (error) {
@@ -46,6 +47,68 @@ class ApiService {
         throw new Error('Cannot connect to server. Make sure backend is running on http://localhost:10000');
       }
       
+      throw error;
+    }
+  }
+
+  /**
+   * Get all jobs from database
+   * @returns {Promise<Object>} - List of all jobs
+   */
+  async getAllJobs() {
+    try {
+      console.log('[API] Fetching all jobs from database');
+      
+      const response = await fetch(`${API_BASE_URL}/jobs`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch jobs: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[API] Fetched jobs:', data.jobs.length);
+      return data;
+
+    } catch (error) {
+      console.error('[API] Failed to fetch jobs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get specific job details with instructions and audio chunks
+   * @param {string} jobId - Job ID
+   * @returns {Promise<Object>} - Complete job details
+   */
+  async getJobDetails(jobId) {
+    try {
+      console.log('[API] Fetching job details for:', jobId);
+      
+      const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('Job not found');
+        }
+        throw new Error(`Failed to fetch job details: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[API] Job details loaded:', data.job.job_id);
+      return data;
+
+    } catch (error) {
+      console.error('[API] Failed to fetch job details:', error);
       throw error;
     }
   }
@@ -90,16 +153,31 @@ class ApiService {
    * @param {string} filename - Desired filename
    */
   async downloadAudio(url, filename) {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(downloadUrl);
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('[API] Download failed:', error);
+      throw new Error('Failed to download audio file');
+    }
+  }
+
+  /**
+   * Download all audio chunks as a zip (future feature)
+   * @param {string} jobId - Job ID
+   */
+  async downloadAllChunks(jobId) {
+    // This would require backend implementation to create zip files
+    console.log('[API] Batch download not yet implemented for job:', jobId);
+    throw new Error('Batch download feature coming soon');
   }
 }
 

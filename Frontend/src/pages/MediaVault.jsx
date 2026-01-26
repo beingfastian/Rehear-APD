@@ -1,16 +1,17 @@
 // Frontend/src/pages/MediaVault.jsx
 
 import React, { useState } from 'react';
-import { Filter, Grid } from 'lucide-react';
+import { Filter, Grid, Loader2, RefreshCw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import Table from '../components/shared/Table';
 import Pagination from '../components/shared/Pagination';
 import FileUpload from '../components/shared/FileUpload';
 
 const MediaVault = ({ setCurrentPage }) => {
-  const { jobs, setCurrentJob } = useApp();
+  const { jobs, setCurrentJob, isLoadingJobs, refreshJobs } = useApp();
   const [itemsPerPage] = useState(10);
   const [currentPageNum, setCurrentPageNum] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const columns = [
     { key: 'name', label: 'File Name & Format' },
@@ -20,14 +21,23 @@ const MediaVault = ({ setCurrentPage }) => {
     { key: 'action', label: 'Action' }
   ];
 
-  const handleRowClick = (item) => {
-    setCurrentJob(item);
+  const handleRowClick = async (item) => {
+    await setCurrentJob(item);
     setCurrentPage('segment');
   };
 
-  const handleUploadSuccess = (job) => {
-    setCurrentJob(job);
+  const handleUploadSuccess = async (job) => {
+    await setCurrentJob(job);
     setCurrentPage('segment');
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshJobs();
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const renderRow = (item) => (
@@ -63,14 +73,30 @@ const MediaVault = ({ setCurrentPage }) => {
 
   return (
     <div className="p-4 sm:p-6">
-      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 sm:mb-6">
-        Media Vault
-      </h1>
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+          Media Vault
+        </h1>
+        
+        <button
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
+      </div>
 
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <h3 className="font-semibold text-gray-900 text-sm sm:text-base">
             All Audio Recordings ({jobs.length})
+            {isLoadingJobs && (
+              <span className="ml-2 text-xs text-gray-500">
+                <Loader2 className="inline w-3 h-3 animate-spin" /> Loading...
+              </span>
+            )}
           </h3>
 
           <div className="flex gap-2 items-center w-full sm:w-auto">
@@ -82,7 +108,12 @@ const MediaVault = ({ setCurrentPage }) => {
           </div>
         </div>
 
-        {paginatedJobs.length > 0 ? (
+        {isLoadingJobs ? (
+          <div className="px-4 sm:px-6 py-8 sm:py-12 text-center">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-4" />
+            <p className="text-gray-500 text-sm sm:text-base">Loading recordings from database...</p>
+          </div>
+        ) : paginatedJobs.length > 0 ? (
           <>
             <Table
               columns={columns}
@@ -99,7 +130,9 @@ const MediaVault = ({ setCurrentPage }) => {
           </>
         ) : (
           <div className="px-4 sm:px-6 py-8 sm:py-12 text-center">
-            <p className="text-gray-500 mb-4 text-sm sm:text-base">No recordings yet. Upload your first audio file!</p>
+            <p className="text-gray-500 mb-4 text-sm sm:text-base">
+              No recordings yet. Upload your first audio file!
+            </p>
             <FileUpload onSuccess={handleUploadSuccess} />
           </div>
         )}

@@ -29,6 +29,11 @@
       color: white;
     }
 
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .section {
       margin: 20px 0;
       padding: 15px;
@@ -81,6 +86,12 @@
       background: #e8f4f8;
       border-radius: 4px;
       margin: 6px 0;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .voice-chunk:hover {
+      background: #d0e8f2;
     }
 
     .voice-chunk.active {
@@ -184,8 +195,22 @@
       font-weight: bold;
     }
 
+    .error {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+
     .record-section {
       margin-bottom: 20px;
+    }
+
+    #audioDebug {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f0f0f0;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: monospace;
     }
   </style>
 </head>
@@ -201,6 +226,7 @@
 </div>
 
 <div id="statusMessage"></div>
+<div id="audioDebug"></div>
 
 <!-- 1. TRANSCRIPTION -->
 <div class="section" id="transcriptionSection" style="display:none;">
@@ -227,8 +253,8 @@
   <div class="player-container">
     <div class="player-controls">
       <button id="playBtn" onclick="togglePlay()">▶</button>
-      <button onclick="previousChunk()">⏮</button>
-      <button onclick="nextChunk()">⏭</button>
+      <button onclick="previousChunk()">⮜</button>
+      <button onclick="nextChunk()">⮞</button>
       <button id="repeatBtn" onclick="toggleRepeat()">🔁</button>
     </div>
 
@@ -239,11 +265,6 @@
 
     <div class="time-display" id="timeDisplay">0:00 / 0:00</div>
   </div>
-</div>
-
-<!-- 5. UPLOAD BUTTON -->
-<div class="upload-section" id="uploadSection" style="display:none;">
-  <button class="upload-btn" onclick="uploadAllToS3()">☁️ Upload All Chunks to S3</button>
 </div>
 
 <script>
@@ -259,18 +280,27 @@ let currentJobId = "";
 
 let recorder, recordChunks = [];
 
+// Audio element configuration
+audio.crossOrigin = "anonymous";
+audio.preload = "auto";
+
 // ==================== RECORDING ====================
 async function startRecording() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  recorder = new MediaRecorder(stream);
-  recordChunks = [];
-  recorder.ondataavailable = e => recordChunks.push(e.data);
-  recorder.onstop = () => {
-    const file = new File([new Blob(recordChunks)], "recording.wav", {type: "audio/wav"});
-    processAudioFile(file);
-  };
-  recorder.start();
-  showStatus("🎙️ Recording...", "processing");
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    recordChunks = [];
+    recorder.ondataavailable = e => recordChunks.push(e.data);
+    recorder.onstop = () => {
+      const file = new File([new Blob(recordChunks)], "recording.wav", {type: "audio/wav"});
+      processAudioFile(file);
+      stream.getTracks().forEach(track => track.stop());
+    };
+    recorder.start();
+    showStatus("🎙️ Recording...", "processing");
+  } catch (err) {
+    showStatus("❌ Microphone access denied: " + err.message, "error");
+  }
 }
 
 function stopRecording() {
@@ -292,18 +322,27 @@ async function processAudioFile(file) {
   fd.append("file", file);
 
   try {
-    const res = await fetch("/analyze-audio", {method: "POST", body: fd});
+    const res = await fetch("http://localhost:10000/analyze-audio", {
+      method: "POST",
+      body: fd
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(errorData.detail || "Server error");
+    }
+
     const data = await res.json();
 
     if (data.error) {
-      showStatus("❌ Error: " + data.error, "processing");
+      showStatus("❌ Error: " + data.error, "error");
       return;
     }
 
     displayResults(data);
     showStatus("✅ Processing complete!", "success");
   } catch (err) {
-    showStatus("❌ Error processing audio", "processing");
+    showStatus("❌ Error processing audio: " + err.message, "error");
     console.error(err);
   }
 }
@@ -350,7 +389,6 @@ function displayResults(data) {
   // 4. Show player
   document.getElementById("playerSection").style.display = "block";
   document.getElementById("voiceSection").style.display = "block";
-  document.getElementById("uploadSection").style.display = "block";
 
   // Load first chunk
   if (allChunks.length > 0) {
@@ -371,14 +409,23 @@ function displayVoiceChunks() {
   document.getElementById("voiceContent").innerHTML = html || "No voice chunks available";
 }
 
-// ==================== AUDIO PLAYER ====================
+// ==================== AUDIO PLAYER (FIXED) ====================
 function loadChunk(index) {
   if (index < 0 || index >= allChunks.length) return;
 
   currentChunkIndex = index;
   const chunk = allChunks[index];
 
+  debugLog(`Loading chunk ${index}: ${chunk.audio}`);
+
+  // Stop current playback
+  audio.pause();
+  audio.currentTime = 0;
+
+  // Set new source
   audio.src = chunk.audio;
+
+  // Force reload
   audio.load();
 
   // Highlight active chunk
@@ -386,22 +433,44 @@ function loadChunk(index) {
     el.classList.toggle("active", i === index);
   });
 
+  // If was playing, start new chunk
   if (isPlaying) {
-    audio.play();
+    audio.play().catch(err => {
+      debugLog("Play error: " + err.message);
+      console.error("Audio play error:", err);
+      isPlaying = false;
+      document.getElementById("playBtn").textContent = "▶";
+      document.getElementById("playBtn").classList.remove("active");
+    });
   }
 
   updateMarkers();
 }
 
 function togglePlay() {
+  if (allChunks.length === 0) {
+    showStatus("❌ No audio chunks available", "error");
+    return;
+  }
+
   if (isPlaying) {
     audio.pause();
     isPlaying = false;
     document.getElementById("playBtn").textContent = "▶";
   } else {
-    audio.play();
-    isPlaying = true;
-    document.getElementById("playBtn").textContent = "⏸";
+    const playPromise = audio.play();
+
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        isPlaying = true;
+        document.getElementById("playBtn").textContent = "⏸";
+        debugLog("Playing successfully");
+      }).catch(err => {
+        debugLog("Play error: " + err.message);
+        console.error("Audio play error:", err);
+        showStatus("❌ Cannot play audio. Check console for details.", "error");
+      });
+    }
   }
   document.getElementById("playBtn").classList.toggle("active", isPlaying);
 }
@@ -423,10 +492,30 @@ function nextChunk() {
 function toggleRepeat() {
   repeatMode = !repeatMode;
   document.getElementById("repeatBtn").classList.toggle("active", repeatMode);
+  debugLog("Repeat mode: " + (repeatMode ? "ON" : "OFF"));
 }
 
 // Audio events
+audio.addEventListener("loadstart", () => {
+  debugLog("Audio loading started");
+});
+
+audio.addEventListener("loadeddata", () => {
+  debugLog("Audio data loaded");
+});
+
+audio.addEventListener("canplay", () => {
+  debugLog("Audio can play");
+});
+
+audio.addEventListener("error", (e) => {
+  debugLog("Audio error: " + (audio.error ? audio.error.message : "Unknown error"));
+  console.error("Audio error event:", e);
+  showStatus("❌ Audio loading error", "error");
+});
+
 audio.addEventListener("ended", () => {
+  debugLog("Audio ended");
   if (repeatMode && currentChunkIndex === allChunks.length - 1) {
     loadChunk(0);
   } else if (currentChunkIndex < allChunks.length - 1) {
@@ -439,12 +528,14 @@ audio.addEventListener("ended", () => {
 });
 
 audio.addEventListener("timeupdate", () => {
-  const progress = (audio.currentTime / audio.duration) * 100;
-  document.getElementById("progressFill").style.width = progress + "%";
+  if (audio.duration) {
+    const progress = (audio.currentTime / audio.duration) * 100;
+    document.getElementById("progressFill").style.width = progress + "%";
 
-  const current = formatTime(audio.currentTime);
-  const total = formatTime(audio.duration);
-  document.getElementById("timeDisplay").textContent = `${current} / ${total}`;
+    const current = formatTime(audio.currentTime);
+    const total = formatTime(audio.duration);
+    document.getElementById("timeDisplay").textContent = `${current} / ${total}`;
+  }
 });
 
 function seekTo(event) {
@@ -470,46 +561,6 @@ function updateMarkers() {
   document.getElementById("markers").innerHTML = markersHtml;
 }
 
-// ==================== UPLOAD TO S3 ====================
-async function uploadAllToS3() {
-  if (allChunks.length === 0) {
-    showStatus("❌ No chunks to upload", "processing");
-    return;
-  }
-
-  showStatus("☁️ Uploading all chunks to S3...", "processing");
-
-  const chunksToUpload = allChunks.map(chunk => ({
-    text: chunk.text,
-    audio: chunk.audio
-  }));
-
-  try {
-    const response = await fetch("/upload-chunks-to-s3", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        chunks: chunksToUpload,
-        job_id: currentJobId
-      })
-    });
-
-    const result = await response.json();
-
-    if (result.success) {
-      showStatus(`✅ ${result.message}`, "success");
-      console.log("Uploaded chunks:", result.chunks);
-    } else {
-      showStatus(`❌ Upload failed: ${result.error}`, "processing");
-    }
-  } catch (err) {
-    showStatus("❌ Error uploading to S3: " + err.message, "processing");
-    console.error(err);
-  }
-}
-
 // ==================== UTILITIES ====================
 function showStatus(message, type) {
   const statusEl = document.getElementById("statusMessage");
@@ -518,8 +569,30 @@ function showStatus(message, type) {
   statusEl.style.padding = "10px";
   statusEl.style.marginBottom = "10px";
   statusEl.style.borderRadius = "4px";
-  statusEl.style.background = type === "success" ? "#d4edda" : "#fff3cd";
+
+  if (type === "success") {
+    statusEl.style.background = "#d4edda";
+    statusEl.style.color = "#155724";
+  } else if (type === "error") {
+    statusEl.style.background = "#f8d7da";
+    statusEl.style.color = "#721c24";
+  } else {
+    statusEl.style.background = "#fff3cd";
+    statusEl.style.color = "#856404";
+  }
 }
+
+function debugLog(message) {
+  const debugEl = document.getElementById("audioDebug");
+  const timestamp = new Date().toLocaleTimeString();
+  debugEl.innerHTML = `[${timestamp}] ${message}<br>` + debugEl.innerHTML;
+  console.log(`[Audio Debug] ${message}`);
+}
+
+// Test audio context on page load
+window.addEventListener('load', () => {
+  debugLog("Page loaded, audio ready");
+});
 </script>
 
 </body>

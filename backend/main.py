@@ -1,4 +1,4 @@
-# backend/main.py - CORS FIX
+# backend/main.py - PRODUCTION READY WITH DATABASE
 
 import os
 import asyncio
@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")
@@ -26,10 +27,13 @@ if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
 import boto3
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+
+# Import database components
+from database import init_db, get_db, AudioJob, Instruction, AudioChunk
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -44,22 +48,33 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
 app = FastAPI(title="Instruction API")
 
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    print("[INFO] Initializing database...")
+    init_db()
+    print("[INFO] Database initialized successfully")
+
+
 # =====================================================
-# CORS CONFIGURATION - CRITICAL FIX
+# CORS CONFIGURATION - PRODUCTION READY
 # =====================================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://localhost:3001",  # Alternative port
-        "*"  # Allow all for development - REMOVE IN PRODUCTION
+        "http://localhost:3001",
+        "https://*.vercel.app",  # If deploying frontend to Vercel
+        "*"  # Remove this in production and specify exact origins
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"]
 )
+
 
 # =====================================================
 # HEALTH CHECK
@@ -72,6 +87,63 @@ def health():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+
+# =====================================================
+# DATABASE ENDPOINTS
+# =====================================================
+@app.get("/jobs")
+def get_all_jobs(db: Session = Depends(get_db)):
+    """Get all audio processing jobs"""
+    jobs = db.query(AudioJob).order_by(AudioJob.created_at.desc()).all()
+    return {"jobs": [
+        {
+            "job_id": job.job_id,
+            "transcription": job.transcription,
+            "instruction_count": job.instruction_count,
+            "created_at": job.created_at.isoformat()
+        }
+        for job in jobs
+    ]}
+
+
+@app.get("/jobs/{job_id}")
+def get_job_details(job_id: str, db: Session = Depends(get_db)):
+    """Get details of a specific job including instructions and audio chunks"""
+    job = db.query(AudioJob).filter(AudioJob.job_id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    instructions = db.query(Instruction).filter(Instruction.job_id == job_id).all()
+    chunks = db.query(AudioChunk).filter(AudioChunk.job_id == job_id).all()
+
+    return {
+        "job": {
+            "job_id": job.job_id,
+            "transcription": job.transcription,
+            "instruction_count": job.instruction_count,
+            "created_at": job.created_at.isoformat()
+        },
+        "instructions": [
+            {
+                "instruction_index": instr.instruction_index,
+                "instruction_text": instr.instruction_text,
+                "steps": instr.steps
+            }
+            for instr in instructions
+        ],
+        "audio_chunks": [
+            {
+                "instruction_index": chunk.instruction_index,
+                "step_index": chunk.step_index,
+                "step_text": chunk.step_text,
+                "audio_url": chunk.audio_url,
+                "s3_key": chunk.s3_key
+            }
+            for chunk in chunks
+        ]
+    }
+
+
 # =====================================================
 # MIC PAGE
 # =====================================================
@@ -81,6 +153,7 @@ def mic_page():
     if not mic_path.exists():
         raise HTTPException(404, "mic.html missing")
     return mic_path.read_text(encoding="utf-8")
+
 
 # =====================================================
 # OPENAI HELPERS
@@ -95,9 +168,11 @@ def _transcribe_sync(path: str) -> str:
         )
     return text.strip()
 
+
 async def transcribe(path: str) -> str:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(THREAD_POOL, _transcribe_sync, path)
+
 
 def _detect_sync(text: str) -> dict:
     prompt = """
@@ -129,9 +204,11 @@ Format:
     )
     return json.loads(res.choices[0].message.content)
 
+
 async def detect(text: str) -> dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(THREAD_POOL, _detect_sync, text)
+
 
 def enforce_english(text: str) -> str:
     prompt = f"""
@@ -156,6 +233,7 @@ Input:
     )
     return res.choices[0].message.content.strip()
 
+
 def split_steps(text: str) -> List[str]:
     text = text.lower()
     text = text.replace(" and then ", " and ")
@@ -170,6 +248,7 @@ def split_steps(text: str) -> List[str]:
 
     return steps
 
+
 def tts_to_s3(text: str, job_id: str, i: int, j: int):
     english_text = enforce_english(text)
 
@@ -182,25 +261,32 @@ def tts_to_s3(text: str, job_id: str, i: int, j: int):
     buf = BytesIO(audio.read())
     key = f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
 
+    # Upload with proper CORS settings
     s3.upload_fileobj(
         buf,
         AWS_S3_BUCKET,
         key,
-        ExtraArgs={"ContentType": "audio/mpeg"}
+        ExtraArgs={
+            "ContentType": "audio/mpeg",
+            "CacheControl": "max-age=3600",
+            "ContentDisposition": "inline"
+        }
     )
 
     return f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
 
+
 # =====================================================
-# MAIN API ENDPOINT
+# MAIN API ENDPOINT WITH DATABASE INTEGRATION
 # =====================================================
 @app.post("/analyze-audio")
-async def analyze_audio(file: UploadFile = File(...)):
+async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Analyze uploaded audio file and return transcription + instruction steps
+    Also saves everything to PostgreSQL database
     """
     print(f"[INFO] Received file: {file.filename}, content_type: {file.content_type}")
-    
+
     # Validate file type
     if not file.content_type or not file.content_type.startswith("audio/"):
         return JSONResponse(
@@ -208,6 +294,7 @@ async def analyze_audio(file: UploadFile = File(...)):
             content={"error": "Unsupported file type. Please upload an audio file."}
         )
 
+    path = None
     try:
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -227,7 +314,18 @@ async def analyze_audio(file: UploadFile = File(...)):
         print(f"[INFO] Detected {len(detected.get('instructions', []))} instructions")
 
         # Generate job ID
-        job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        job_id = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:17]
+
+        # Create AudioJob record
+        audio_job = AudioJob(
+            job_id=job_id,
+            transcription=transcription,
+            instruction_count=len(detected.get("instructions", []))
+        )
+        db.add(audio_job)
+        db.commit()
+        print(f"[INFO] Created AudioJob with job_id: {job_id}")
+
         output = []
 
         # Process each instruction
@@ -235,15 +333,38 @@ async def analyze_audio(file: UploadFile = File(...)):
             steps = split_steps(instr)
             step_data = []
 
+            # Save instruction to database
+            instruction_record = Instruction(
+                job_id=job_id,
+                instruction_index=i,
+                instruction_text=instr.capitalize(),
+                steps=[s for s in steps]
+            )
+            db.add(instruction_record)
+
             for j, step in enumerate(steps):
                 print(f"[INFO] Generating TTS for step {i}-{j}: {step}")
                 url = tts_to_s3(step, job_id, i, j)
+
+                # Save audio chunk to database
+                audio_chunk = AudioChunk(
+                    job_id=job_id,
+                    instruction_index=i,
+                    step_index=j,
+                    step_text=step,
+                    audio_url=url,
+                    s3_key=f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
+                )
+                db.add(audio_chunk)
+
                 step_data.append({
                     "text": step,
                     "audio": url,
                     "download": url,
                     "s3_key": f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
                 })
+
+            db.commit()  # Commit after each instruction
 
             output.append({
                 "instruction": instr.capitalize(),
@@ -258,7 +379,8 @@ async def analyze_audio(file: UploadFile = File(...)):
             "instructions": output,
             "meta": {
                 "instruction_count": len(output),
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "saved_to_db": True
             }
         }
 
@@ -266,13 +388,18 @@ async def analyze_audio(file: UploadFile = File(...)):
         print(f"[ERROR] Processing failed: {str(e)}")
         import traceback
         traceback.print_exc()
+
+        # Rollback database changes on error
+        db.rollback()
+
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Cleanup temp file
-        try:
-            os.unlink(path)
-        except:
-            pass
+        if path:
+            try:
+                os.unlink(path)
+            except:
+                pass
 
 
 # =====================================================
@@ -280,5 +407,7 @@ async def analyze_audio(file: UploadFile = File(...)):
 # =====================================================
 if __name__ == "__main__":
     import uvicorn
+
     print("Starting server on http://localhost:10000")
+    print("Database URL:", os.getenv("DATABASE_URL", "Not configured"))
     uvicorn.run(app, host="0.0.0.0", port=10000)
