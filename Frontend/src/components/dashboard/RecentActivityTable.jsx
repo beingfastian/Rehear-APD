@@ -1,9 +1,14 @@
+// Frontend/src/components/dashboard/RecentActivityTable.jsx - CLICKABLE ROWS
+
 import React from 'react';
 import { Filter, Grid } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
 import Table from '../shared/Table';
 import Pagination from '../shared/Pagination';
 
-const RecentActivityTable = ({ data }) => {
+const RecentActivityTable = ({ data, setCurrentPage }) => {
+  const { setCurrentJob } = useApp();
+
   const columns = [
     { key: 'name', label: 'File Name & Format' },
     { key: 'type', label: 'Processing Type' },
@@ -11,6 +16,12 @@ const RecentActivityTable = ({ data }) => {
     { key: 'status', label: 'Status' },
     { key: 'action', label: 'Action' }
   ];
+
+  const handleRowClick = async (item) => {
+    console.log('[RecentActivity] Row clicked:', item.id);
+    await setCurrentJob(item);
+    setCurrentPage('segment');
+  };
 
   const renderRow = (item) => (
     <>
@@ -31,24 +42,27 @@ const RecentActivityTable = ({ data }) => {
         </span>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm">
-        <input type="checkbox" className="w-4 h-4 text-blue-600 border-gray-300 rounded" />
+        <input 
+          type="checkbox" 
+          className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+          onClick={(e) => e.stopPropagation()}
+        />
       </td>
     </>
   );
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200">
-      <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-        <h3 className="font-semibold text-gray-900">Recent activity</h3>
-        <div className="flex gap-2">
-          <Filter className="w-5 h-5 text-gray-400 cursor-pointer" />
-          <Grid className="w-5 h-5 text-gray-400 cursor-pointer" />
-        </div>
-      </div>
-      
-      <Table columns={columns} data={data} renderRow={renderRow} />
-      <Pagination totalItems={data.length} currentPage={1} />
-    </div>
+    <>
+      <Table 
+        columns={columns} 
+        data={data} 
+        renderRow={renderRow} 
+        onRowClick={handleRowClick}
+      />
+      {data.length > 10 && (
+        <Pagination totalItems={data.length} currentPage={1} />
+      )}
+    </>
   );
 };
 

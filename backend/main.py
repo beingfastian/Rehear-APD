@@ -1,4 +1,4 @@
-# backend/main.py - PRODUCTION READY WITH DATABASE
+# backend/main.py - WITH AUTO S3 CONFIGURATION
 
 import os
 import asyncio
@@ -27,6 +27,7 @@ if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
 import boto3
+from botocore.exceptions import ClientError
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,16 +50,156 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 app = FastAPI(title="Instruction API")
 
 
-# Initialize database on startup
+# =====================================================
+# S3 BUCKET AUTO-CONFIGURATION
+# =====================================================
+def configure_s3_bucket():
+    """Automatically configure S3 bucket on startup"""
+    print("\n" + "=" * 60)
+    print("🔧 CONFIGURING S3 BUCKET")
+    print("=" * 60)
+
+    try:
+        # Check bucket exists
+        print(f"[S3] Checking bucket: {AWS_S3_BUCKET}")
+        s3.head_bucket(Bucket=AWS_S3_BUCKET)
+        print(f"[S3] ✅ Bucket exists")
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == '404':
+            print(f"[S3] ⚠️  Bucket doesn't exist, creating...")
+            try:
+                if AWS_REGION == 'us-east-1':
+                    s3.create_bucket(Bucket=AWS_S3_BUCKET)
+                else:
+                    s3.create_bucket(
+                        Bucket=AWS_S3_BUCKET,
+                        CreateBucketConfiguration={'LocationConstraint': AWS_REGION}
+                    )
+                print(f"[S3] ✅ Bucket created")
+            except Exception as create_err:
+                print(f"[S3] ❌ Failed to create bucket: {create_err}")
+                return False
+        else:
+            print(f"[S3] ❌ Cannot access bucket: {e}")
+            return False
+
+    # Configure bucket policy for public read
+    print(f"[S3] Setting bucket policy...")
+    bucket_policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "PublicReadGetObject",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": f"arn:aws:s3:::{AWS_S3_BUCKET}/*"
+            }
+        ]
+    }
+
+    try:
+        s3.put_bucket_policy(
+            Bucket=AWS_S3_BUCKET,
+            Policy=json.dumps(bucket_policy)
+        )
+        print(f"[S3] ✅ Bucket policy configured (public read)")
+    except ClientError as e:
+        print(f"[S3] ⚠️  Could not set bucket policy: {e}")
+        print(f"[S3] You may need to set it manually in AWS Console")
+
+    # Configure CORS
+    print(f"[S3] Setting CORS configuration...")
+    cors_config = {
+        'CORSRules': [
+            {
+                'AllowedHeaders': ['*'],
+                'AllowedMethods': ['GET', 'HEAD'],
+                'AllowedOrigins': ['*'],
+                'ExposeHeaders': ['ETag', 'Content-Length', 'Content-Type'],
+                'MaxAgeSeconds': 3600
+            }
+        ]
+    }
+
+    try:
+        s3.put_bucket_cors(
+            Bucket=AWS_S3_BUCKET,
+            CORSConfiguration=cors_config
+        )
+        print(f"[S3] ✅ CORS configured")
+    except ClientError as e:
+        print(f"[S3] ⚠️  Could not set CORS: {e}")
+
+    # Disable block public access
+    print(f"[S3] Configuring public access...")
+    try:
+        s3.put_public_access_block(
+            Bucket=AWS_S3_BUCKET,
+            PublicAccessBlockConfiguration={
+                'BlockPublicAcls': False,
+                'IgnorePublicAcls': False,
+                'BlockPublicPolicy': False,
+                'RestrictPublicBuckets': False
+            }
+        )
+        print(f"[S3] ✅ Public access enabled")
+    except ClientError as e:
+        print(f"[S3] ⚠️  Could not modify public access: {e}")
+
+    # Test upload
+    print(f"[S3] Testing upload...")
+    test_key = "test/startup-test.txt"
+    try:
+        s3.put_object(
+            Bucket=AWS_S3_BUCKET,
+            Key=test_key,
+            Body=b"S3 is configured correctly",
+            ContentType="text/plain"
+        )
+
+        test_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{test_key}"
+        print(f"[S3] ✅ Upload successful")
+        print(f"[S3] Test URL: {test_url}")
+
+        # Cleanup test file
+        s3.delete_object(Bucket=AWS_S3_BUCKET, Key=test_key)
+
+    except Exception as e:
+        print(f"[S3] ❌ Upload test failed: {e}")
+        return False
+
+    print("=" * 60)
+    print("✨ S3 BUCKET READY!")
+    print("=" * 60 + "\n")
+    return True
+
+
+# Initialize database and S3 on startup
 @app.on_event("startup")
 async def startup_event():
+    print("\n" + "=" * 60)
+    print("🚀 STARTING AUDIO INSTRUCTION API")
+    print("=" * 60)
+
+    # Initialize database
     print("[INFO] Initializing database...")
     init_db()
-    print("[INFO] Database initialized successfully")
+    print("[INFO] ✅ Database initialized")
+
+    # Configure S3
+    configure_s3_bucket()
+
+    print(f"[INFO] Server ready at: http://localhost:10000")
+    print(f"[INFO] S3 Bucket: {AWS_S3_BUCKET}")
+    print(f"[INFO] AWS Region: {AWS_REGION}")
+    print("=" * 60 + "\n")
 
 
 # =====================================================
-# CORS CONFIGURATION - PRODUCTION READY
+# CORS CONFIGURATION
 # =====================================================
 app.add_middleware(
     CORSMiddleware,
@@ -66,8 +207,8 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "https://*.vercel.app",  # If deploying frontend to Vercel
-        "*"  # Remove this in production and specify exact origins
+        "https://*.vercel.app",
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -84,7 +225,9 @@ def health():
     return {
         "status": "ok",
         "message": "Audio Instruction API is running",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "s3_bucket": AWS_S3_BUCKET,
+        "database": "connected"
     }
 
 
@@ -95,6 +238,7 @@ def health():
 def get_all_jobs(db: Session = Depends(get_db)):
     """Get all audio processing jobs"""
     jobs = db.query(AudioJob).order_by(AudioJob.created_at.desc()).all()
+    print(f"[INFO] Fetched {len(jobs)} jobs from database")
     return {"jobs": [
         {
             "job_id": job.job_id,
@@ -113,8 +257,15 @@ def get_job_details(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    instructions = db.query(Instruction).filter(Instruction.job_id == job_id).all()
-    chunks = db.query(AudioChunk).filter(AudioChunk.job_id == job_id).all()
+    instructions = db.query(Instruction).filter(
+        Instruction.job_id == job_id
+    ).order_by(Instruction.instruction_index).all()
+
+    chunks = db.query(AudioChunk).filter(
+        AudioChunk.job_id == job_id
+    ).order_by(AudioChunk.instruction_index, AudioChunk.step_index).all()
+
+    print(f"[INFO] Fetched job {job_id}: {len(instructions)} instructions, {len(chunks)} chunks")
 
     return {
         "job": {
@@ -142,6 +293,32 @@ def get_job_details(job_id: str, db: Session = Depends(get_db)):
             for chunk in chunks
         ]
     }
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str, db: Session = Depends(get_db)):
+    """Delete a job and all its related data"""
+    job = db.query(AudioJob).filter(AudioJob.job_id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Delete chunks from S3
+    chunks = db.query(AudioChunk).filter(AudioChunk.job_id == job_id).all()
+    for chunk in chunks:
+        try:
+            s3.delete_object(Bucket=AWS_S3_BUCKET, Key=chunk.s3_key)
+            print(f"[INFO] Deleted S3 object: {chunk.s3_key}")
+        except Exception as e:
+            print(f"[ERROR] Failed to delete S3 object {chunk.s3_key}: {e}")
+
+    # Delete from database
+    db.query(AudioChunk).filter(AudioChunk.job_id == job_id).delete()
+    db.query(Instruction).filter(Instruction.job_id == job_id).delete()
+    db.query(AudioJob).filter(AudioJob.job_id == job_id).delete()
+    db.commit()
+
+    print(f"[INFO] Deleted job {job_id}")
+    return {"message": f"Job {job_id} deleted successfully"}
 
 
 # =====================================================
@@ -250,8 +427,12 @@ def split_steps(text: str) -> List[str]:
 
 
 def tts_to_s3(text: str, job_id: str, i: int, j: int):
+    """Generate TTS and upload to S3 (no ACL needed)"""
+    print(f"[TTS] Generating audio for: '{text[:50]}...'")
+
     english_text = enforce_english(text)
 
+    # Generate audio
     audio = client.audio.speech.create(
         model="tts-1",
         voice="alloy",
@@ -261,33 +442,40 @@ def tts_to_s3(text: str, job_id: str, i: int, j: int):
     buf = BytesIO(audio.read())
     key = f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
 
-    # Upload with proper CORS settings
-    s3.upload_fileobj(
-        buf,
-        AWS_S3_BUCKET,
-        key,
-        ExtraArgs={
-            "ContentType": "audio/mpeg",
-            "CacheControl": "max-age=3600",
-            "ContentDisposition": "inline"
-        }
-    )
+    # Upload to S3 (bucket policy handles public access)
+    try:
+        s3.upload_fileobj(
+            buf,
+            AWS_S3_BUCKET,
+            key,
+            ExtraArgs={
+                "ContentType": "audio/mpeg",
+                "CacheControl": "max-age=3600",
+                "ContentDisposition": "inline"
+            }
+        )
+        print(f"[S3] ✅ Uploaded: {key}")
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        print(f"[S3] ❌ Upload failed: {error_code} - {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"S3 upload failed: {error_code}. Check bucket permissions."
+        )
 
-    return f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
+    url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
+    print(f"[S3] 🔗 URL: {url}")
+    return url
 
 
 # =====================================================
-# MAIN API ENDPOINT WITH DATABASE INTEGRATION
+# MAIN API ENDPOINT
 # =====================================================
 @app.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    Analyze uploaded audio file and return transcription + instruction steps
-    Also saves everything to PostgreSQL database
-    """
+    """Analyze uploaded audio file"""
     print(f"[INFO] Received file: {file.filename}, content_type: {file.content_type}")
 
-    # Validate file type
     if not file.content_type or not file.content_type.startswith("audio/"):
         return JSONResponse(
             status_code=400,
@@ -306,7 +494,7 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
         # Transcribe
         print("[INFO] Starting transcription...")
         transcription = await transcribe(path)
-        print(f"[INFO] Transcription complete: {transcription[:100]}...")
+        print(f"[INFO] Transcription: {transcription[:100]}...")
 
         # Detect instructions
         print("[INFO] Detecting instructions...")
@@ -324,16 +512,17 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
         )
         db.add(audio_job)
         db.commit()
-        print(f"[INFO] Created AudioJob with job_id: {job_id}")
+        print(f"[INFO] Created job: {job_id}")
 
         output = []
+        total_chunks = 0
 
         # Process each instruction
         for i, instr in enumerate(detected.get("instructions", [])):
             steps = split_steps(instr)
             step_data = []
 
-            # Save instruction to database
+            # Save instruction
             instruction_record = Instruction(
                 job_id=job_id,
                 instruction_index=i,
@@ -341,12 +530,15 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                 steps=[s for s in steps]
             )
             db.add(instruction_record)
+            db.flush()
 
             for j, step in enumerate(steps):
-                print(f"[INFO] Generating TTS for step {i}-{j}: {step}")
+                print(f"[INFO] Processing step {i}-{j}: {step}")
+
+                # Generate TTS and upload to S3
                 url = tts_to_s3(step, job_id, i, j)
 
-                # Save audio chunk to database
+                # Save audio chunk
                 audio_chunk = AudioChunk(
                     job_id=job_id,
                     instruction_index=i,
@@ -356,6 +548,7 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                     s3_key=f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
                 )
                 db.add(audio_chunk)
+                total_chunks += 1
 
                 step_data.append({
                     "text": step,
@@ -364,14 +557,15 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                     "s3_key": f"tts/{job_id}/instruction_{i}_step_{j}.mp3"
                 })
 
-            db.commit()  # Commit after each instruction
+            db.commit()
+            print(f"[INFO] Saved instruction {i}")
 
             output.append({
                 "instruction": instr.capitalize(),
                 "steps": step_data
             })
 
-        print(f"[INFO] Processing complete for job {job_id}")
+        print(f"[SUCCESS] Job {job_id} completed: {total_chunks} chunks uploaded")
 
         return {
             "job_id": job_id,
@@ -379,22 +573,22 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
             "instructions": output,
             "meta": {
                 "instruction_count": len(output),
+                "total_chunks": total_chunks,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
-                "saved_to_db": True
+                "saved_to_db": True,
+                "s3_bucket": AWS_S3_BUCKET
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[ERROR] Processing failed: {str(e)}")
         import traceback
         traceback.print_exc()
-
-        # Rollback database changes on error
         db.rollback()
-
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Cleanup temp file
         if path:
             try:
                 os.unlink(path)
@@ -408,6 +602,9 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 if __name__ == "__main__":
     import uvicorn
 
-    print("Starting server on http://localhost:10000")
-    print("Database URL:", os.getenv("DATABASE_URL", "Not configured"))
+    print("\n" + "=" * 60)
+    print("🎙️  AUDIO INSTRUCTION API")
+    print("=" * 60)
+    print(f"Starting server on http://localhost:10000")
+    print("=" * 60 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)

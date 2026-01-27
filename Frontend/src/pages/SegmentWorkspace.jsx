@@ -1,7 +1,7 @@
-// Frontend/src/pages/SegmentWorkspace.jsx
+// Frontend/src/pages/SegmentWorkspace.jsx - AUDIO PLAYBACK FIXED
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Search, Play, Pause, ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
+import { Mic, Search, Play, Pause, ChevronLeft, ChevronRight, Download, Loader2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
 
@@ -14,6 +14,7 @@ const SegmentWorkspace = () => {
   const [audioError, setAudioError] = useState(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const audioRef = useRef(new Audio());
+  const hasTriedToPlay = useRef(false);
 
   // Flatten all steps for playback
   const allSteps = currentJob?.instructions?.flatMap((inst, instIdx) =>
@@ -29,106 +30,179 @@ const SegmentWorkspace = () => {
 
   // Load audio when step changes
   useEffect(() => {
-    if (currentStep?.audio) {
-      setIsLoadingAudio(true);
-      setAudioError(null);
-      
-      // Configure audio element
-      audioRef.current.crossOrigin = "anonymous";
-      audioRef.current.preload = "auto";
-      audioRef.current.src = currentStep.audio;
-      audioRef.current.load();
-
-      audioRef.current.onloadstart = () => {
-        console.log('[Audio] Loading started:', currentStep.audio);
-      };
-
-      audioRef.current.onloadeddata = () => {
-        console.log('[Audio] Data loaded');
-        setIsLoadingAudio(false);
-      };
-
-      audioRef.current.onloadedmetadata = () => {
-        setDuration(audioRef.current.duration);
-        console.log('[Audio] Duration:', audioRef.current.duration);
-      };
-
-      audioRef.current.ontimeupdate = () => {
-        setCurrentTime(audioRef.current.currentTime);
-      };
-
-      audioRef.current.onended = () => {
-        setIsPlaying(false);
-        // Auto-play next step
-        if (currentStepIndex < allSteps.length - 1) {
-          setTimeout(() => {
-            setCurrentStepIndex(prev => prev + 1);
-          }, 500);
-        }
-      };
-
-      audioRef.current.onerror = (e) => {
-        console.error('[Audio] Error loading:', e);
-        setAudioError('Failed to load audio. Please check your S3 CORS configuration.');
-        setIsLoadingAudio(false);
-        setIsPlaying(false);
-      };
-
-      audioRef.current.oncanplay = () => {
-        console.log('[Audio] Can play');
-      };
+    if (!currentStep?.audio) {
+      console.log('[Audio] No audio URL for current step');
+      return;
     }
 
+    console.log('[Audio] Loading step:', currentStepIndex, currentStep.audio);
+    
+    // Reset states
+    setIsLoadingAudio(true);
+    setAudioError(null);
+    setIsPlaying(false);
+    hasTriedToPlay.current = false;
+    
+    // Stop current audio
+    audioRef.current.pause();
+    audioRef.current.currentTime = 0;
+    
+    // Configure audio element
+    audioRef.current.crossOrigin = "anonymous";
+    audioRef.current.preload = "auto";
+    audioRef.current.src = currentStep.audio;
+
+    // Event handlers
+    const handleLoadStart = () => {
+      console.log('[Audio] Loading started');
+      setIsLoadingAudio(true);
+    };
+
+    const handleLoadedData = () => {
+      console.log('[Audio] Data loaded successfully');
+      setIsLoadingAudio(false);
+      setAudioError(null);
+    };
+
+    const handleLoadedMetadata = () => {
+      const audioDuration = audioRef.current.duration;
+      console.log('[Audio] Duration:', audioDuration);
+      setDuration(audioDuration);
+    };
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(audioRef.current.currentTime);
+    };
+
+    const handleEnded = () => {
+      console.log('[Audio] Playback ended');
+      setIsPlaying(false);
+      
+      // Only auto-advance if we successfully played
+      if (!audioError && currentStepIndex < allSteps.length - 1) {
+        setTimeout(() => {
+          console.log('[Audio] Auto-advancing to next step');
+          setCurrentStepIndex(prev => prev + 1);
+        }, 500);
+      }
+    };
+
+    const handleError = (e) => {
+      console.error('[Audio] Error:', e);
+      const errorMsg = audioRef.current.error 
+        ? `Error ${audioRef.current.error.code}: ${getAudioErrorMessage(audioRef.current.error.code)}`
+        : 'Failed to load audio';
+      
+      setAudioError(errorMsg);
+      setIsLoadingAudio(false);
+      setIsPlaying(false);
+    };
+
+    const handleCanPlay = () => {
+      console.log('[Audio] Can play - ready to start');
+      setIsLoadingAudio(false);
+    };
+
+    const handleWaiting = () => {
+      console.log('[Audio] Waiting for data...');
+      setIsLoadingAudio(true);
+    };
+
+    const handlePlaying = () => {
+      console.log('[Audio] Playing');
+      setIsLoadingAudio(false);
+    };
+
+    // Attach event listeners
+    audioRef.current.addEventListener('loadstart', handleLoadStart);
+    audioRef.current.addEventListener('loadeddata', handleLoadedData);
+    audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+    audioRef.current.addEventListener('ended', handleEnded);
+    audioRef.current.addEventListener('error', handleError);
+    audioRef.current.addEventListener('canplay', handleCanPlay);
+    audioRef.current.addEventListener('waiting', handleWaiting);
+    audioRef.current.addEventListener('playing', handlePlaying);
+
+    // Load the audio
+    audioRef.current.load();
+
+    // Cleanup
     return () => {
+      audioRef.current.removeEventListener('loadstart', handleLoadStart);
+      audioRef.current.removeEventListener('loadeddata', handleLoadedData);
+      audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+      audioRef.current.removeEventListener('ended', handleEnded);
+      audioRef.current.removeEventListener('error', handleError);
+      audioRef.current.removeEventListener('canplay', handleCanPlay);
+      audioRef.current.removeEventListener('waiting', handleWaiting);
+      audioRef.current.removeEventListener('playing', handlePlaying);
       audioRef.current.pause();
     };
-  }, [currentStep, currentStepIndex, allSteps.length]);
+  }, [currentStepIndex, currentStep?.audio, allSteps.length, audioError]);
 
-  const togglePlay = () => {
+  const getAudioErrorMessage = (errorCode) => {
+    switch (errorCode) {
+      case 1: return 'MEDIA_ERR_ABORTED - Download aborted';
+      case 2: return 'MEDIA_ERR_NETWORK - Network error';
+      case 3: return 'MEDIA_ERR_DECODE - Decode error';
+      case 4: return 'MEDIA_ERR_SRC_NOT_SUPPORTED - Format not supported or CORS issue';
+      default: return 'Unknown error';
+    }
+  };
+
+  const togglePlay = async () => {
     if (audioError) {
-      alert('Cannot play audio: ' + audioError);
+      console.log('[Audio] Cannot play due to error:', audioError);
+      return;
+    }
+
+    if (isLoadingAudio) {
+      console.log('[Audio] Still loading, please wait');
       return;
     }
 
     if (isPlaying) {
+      console.log('[Audio] Pausing');
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      const playPromise = audioRef.current.play();
+      console.log('[Audio] Attempting to play');
+      hasTriedToPlay.current = true;
       
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            setIsPlaying(true);
-            console.log('[Audio] Playing successfully');
-          })
-          .catch(err => {
-            console.error('[Audio] Play error:', err);
-            setAudioError('Playback failed: ' + err.message);
-            setIsPlaying(false);
-          });
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+        console.log('[Audio] Playing successfully');
+      } catch (err) {
+        console.error('[Audio] Play failed:', err);
+        setAudioError(`Playback failed: ${err.message}`);
+        setIsPlaying(false);
       }
     }
   };
 
-  const playStep = (index) => {
+  const playStep = async (index) => {
+    console.log('[Audio] Switching to step:', index);
+    
+    // Stop current playback
+    audioRef.current.pause();
+    setIsPlaying(false);
+    
+    // Change step
     setCurrentStepIndex(index);
-    // Will auto-play after audio loads if was playing
-    if (isPlaying) {
-      setIsPlaying(false);
-      setTimeout(() => setIsPlaying(true), 300);
-    }
   };
 
   const previousStep = () => {
     if (currentStepIndex > 0) {
-      setCurrentStepIndex(prev => prev - 1);
+      playStep(currentStepIndex - 1);
     }
   };
 
   const nextStep = () => {
     if (currentStepIndex < allSteps.length - 1) {
-      setCurrentStepIndex(prev => prev + 1);
+      playStep(currentStepIndex + 1);
     }
   };
 
@@ -161,11 +235,20 @@ const SegmentWorkspace = () => {
   };
 
   const seekToPosition = (e) => {
+    if (audioError || isLoadingAudio) return;
+    
     const progressBar = e.currentTarget;
     const rect = progressBar.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = x / rect.width;
     audioRef.current.currentTime = percentage * duration;
+  };
+
+  const testAudioURL = () => {
+    if (currentStep?.audio) {
+      console.log('[Debug] Testing audio URL:', currentStep.audio);
+      window.open(currentStep.audio, '_blank');
+    }
   };
 
   if (!currentJob) {
@@ -186,7 +269,7 @@ const SegmentWorkspace = () => {
         {currentJob.name}
       </h1>
 
-      {/* Pipeline Status - Horizontal scroll on mobile */}
+      {/* Pipeline Status */}
       <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2">
         <button className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 whitespace-nowrap flex-shrink-0">
           <Mic className="w-3 h-3 sm:w-4 sm:h-4" /> Audio Ingestion
@@ -202,26 +285,54 @@ const SegmentWorkspace = () => {
         </button>
       </div>
 
-      {/* Responsive Grid - Stack on mobile, side-by-side on desktop */}
+      {/* Responsive Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         
-        {/* Left column - Order matters for mobile: player first */}
+        {/* Left column */}
         <div className="lg:col-span-2 space-y-4 sm:space-y-6 order-2 lg:order-1">
 
-          {/* Audio Player - Shown first on mobile */}
-          <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 lg:order-last">
+          {/* Audio Player */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             
             {/* Error Display */}
             {audioError && (
-              <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                {audioError}
+              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-red-800 mb-1">Audio Playback Error</p>
+                    <p className="text-xs text-red-700 mb-2">{audioError}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={testAudioURL}
+                        className="text-xs text-red-600 hover:text-red-700 underline"
+                      >
+                        Test URL in new tab
+                      </button>
+                      <button
+                        onClick={() => playStep(currentStepIndex)}
+                        className="text-xs text-red-600 hover:text-red-700 underline"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Loading Indicator */}
+            {isLoadingAudio && !audioError && (
+              <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading audio...
               </div>
             )}
 
             {/* Progress Bar */}
             <div className="flex items-center gap-2 sm:gap-4 mb-3 sm:mb-4">
               <div 
-                className="flex-1 bg-gray-200 rounded-full h-2 cursor-pointer"
+                className={`flex-1 bg-gray-200 rounded-full h-2 ${!audioError && !isLoadingAudio ? 'cursor-pointer' : ''}`}
                 onClick={seekToPosition}
               >
                 <div 
@@ -235,16 +346,21 @@ const SegmentWorkspace = () => {
             <div className="flex items-center justify-center gap-3 sm:gap-4">
               <button 
                 onClick={previousStep} 
-                disabled={currentStepIndex === 0 || isLoadingAudio}
+                disabled={currentStepIndex === 0}
+                className="disabled:opacity-30"
               >
                 <ChevronLeft className={`w-5 h-5 sm:w-6 sm:h-6 ${
-                  currentStepIndex === 0 || isLoadingAudio
-                    ? 'text-gray-300' 
+                  currentStepIndex === 0
+                    ? 'text-gray-300 cursor-not-allowed' 
                     : 'text-gray-600 cursor-pointer hover:text-blue-600'
                 }`} />
               </button>
               
-              <button onClick={togglePlay} disabled={isLoadingAudio}>
+              <button 
+                onClick={togglePlay} 
+                disabled={isLoadingAudio || audioError}
+                className="disabled:opacity-50"
+              >
                 {isLoadingAudio ? (
                   <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin text-blue-600" />
                 ) : isPlaying ? (
@@ -256,11 +372,12 @@ const SegmentWorkspace = () => {
               
               <button 
                 onClick={nextStep} 
-                disabled={currentStepIndex === allSteps.length - 1 || isLoadingAudio}
+                disabled={currentStepIndex === allSteps.length - 1}
+                className="disabled:opacity-30"
               >
                 <ChevronRight className={`w-5 h-5 sm:w-6 sm:h-6 ${
-                  currentStepIndex === allSteps.length - 1 || isLoadingAudio
-                    ? 'text-gray-300' 
+                  currentStepIndex === allSteps.length - 1
+                    ? 'text-gray-300 cursor-not-allowed' 
                     : 'text-gray-600 cursor-pointer hover:text-blue-600'
                 }`} />
               </button>
@@ -269,14 +386,28 @@ const SegmentWorkspace = () => {
             {/* Time Display */}
             <div className="flex flex-col sm:flex-row justify-between items-center mt-3 sm:mt-4 gap-2 text-xs sm:text-sm text-gray-600">
               <span className="font-mono">{formatTime(currentTime)}</span>
-              <span className="text-center text-xs text-gray-500 px-2">
+              <span className="text-center text-xs text-gray-500 px-2 truncate max-w-xs">
                 Step {currentStepIndex + 1}/{allSteps.length}: {currentStep?.text}
               </span>
               <span className="font-mono">{formatTime(duration)}</span>
             </div>
+
+            {/* Debug Info */}
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <details className="text-xs text-gray-500">
+                <summary className="cursor-pointer hover:text-gray-700">Debug Info</summary>
+                <div className="mt-2 space-y-1 font-mono">
+                  <p>URL: {currentStep?.audio?.substring(0, 60)}...</p>
+                  <p>Loading: {isLoadingAudio ? 'Yes' : 'No'}</p>
+                  <p>Error: {audioError || 'None'}</p>
+                  <p>Ready State: {audioRef.current?.readyState}</p>
+                  <p>Network State: {audioRef.current?.networkState}</p>
+                </div>
+              </details>
+            </div>
           </div>
 
-          {/* Download Transcript Button */}
+          {/* Download Transcript */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <button 
               onClick={handleDownloadTranscript}
@@ -287,7 +418,7 @@ const SegmentWorkspace = () => {
             </button>
           </div>
 
-          {/* Transcription Search and Display */}
+          {/* Transcription */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <div className="relative mb-4">
               <Search className="w-4 h-4 sm:w-5 sm:h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -335,12 +466,12 @@ const SegmentWorkspace = () => {
               {allSteps.map((step, index) => (
                 <div
                   key={index}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                  className={`p-3 rounded-lg border transition-all ${
                     index === currentStepIndex
                       ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-300'
-                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100 cursor-pointer'
                   }`}
-                  onClick={() => playStep(index)}
+                  onClick={() => index !== currentStepIndex && playStep(index)}
                 >
                   <h4 className="font-medium text-gray-900 mb-1 text-xs sm:text-sm">
                     Step {index + 1}
@@ -357,16 +488,9 @@ const SegmentWorkspace = () => {
                         e.stopPropagation();
                         playStep(index);
                       }}
-                      disabled={isLoadingAudio && index === currentStepIndex}
                       className="flex-1 px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-500 text-white rounded text-xs sm:text-sm hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-1"
                     >
-                      {isLoadingAudio && index === currentStepIndex ? (
-                        <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Play className="w-3 h-3 sm:w-4 sm:h-4" /> Play
-                        </>
-                      )}
+                      <Play className="w-3 h-3 sm:w-4 sm:h-4" /> Play
                     </button>
                     <button 
                       onClick={(e) => {
