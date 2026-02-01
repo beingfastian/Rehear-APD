@@ -1,7 +1,6 @@
-// Frontend/src/components/layout/Sidebar.jsx
 
 import React, { useState } from 'react';
-import { Grid, Folder, FileText, Settings, HelpCircle, Menu, X } from 'lucide-react';
+import { Grid, Folder, FileText, Settings, HelpCircle, Menu, X, Mic } from 'lucide-react';
 
 const Sidebar = ({ currentPage, setCurrentPage }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -10,6 +9,7 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
     { id: 'dashboard', icon: Grid, label: 'Dashboard' },
     { id: 'media', icon: Folder, label: 'Media Vault' },
     { id: 'segment', icon: FileText, label: 'Segment Workspace' },
+    { id: 'live-transcription', icon: Mic, label: 'Live Transcription', badge: 'NEW' }, // NEW ITEM
     { id: 'settings', icon: Settings, label: 'Settings' },
     { id: 'help', icon: HelpCircle, label: 'Help Center' },
   ];
@@ -61,16 +61,31 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
             <div
               key={item.id}
               onClick={() => handleNavigation(item.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors relative
               ${currentPage === item.id
                 ? 'bg-blue-50 text-blue-600'
                 : 'text-gray-700 hover:bg-gray-50'}`}
             >
               <item.icon className="w-5 h-5 flex-shrink-0" />
-              <span className="truncate">{item.label}</span>
+              <span className="truncate flex-1">{item.label}</span>
+              
+              {/* NEW Badge */}
+              {item.badge && (
+                <span className="px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded-full">
+                  {item.badge}
+                </span>
+              )}
             </div>
           ))}
         </nav>
+
+        {/* Footer Info */}
+        <div className="p-4 border-t border-gray-200">
+          <div className="text-xs text-gray-500">
+            <p className="font-semibold mb-1">🎙️ New Feature!</p>
+            <p>Try Live Transcription for real-time audio to text</p>
+          </div>
+        </div>
       </div>
     </>
   );

@@ -11,7 +11,8 @@ from typing import List
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from io import BytesIO
 import multiprocessing
-
+from fastapi import WebSocket, WebSocketDisconnect
+from websocket_handler import LiveTranscriptionHandler, AudioStreamProcessor
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
@@ -72,6 +73,7 @@ app = FastAPI(
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else [
     "https://apd-listener-tool.vercel.app/",
     "http://127.0.0.1:3000",
+    "http://localhost:3000",
     "https://*.vercel.app",
 ]
 
@@ -443,7 +445,45 @@ async def tts_to_s3_async(text: str, job_id: str, i: int, j: int):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(THREAD_POOL, tts_to_s3, text, job_id, i, j)
 
-
+@app.websocket("/ws/live-transcription")
+async def websocket_live_transcription(websocket: WebSocket):
+    """
+    WebSocket endpoint for live audio transcription
+    
+    Client sends:
+    - Audio chunks as binary data
+    - Control messages as JSON: {"type": "stop"} or {"type": "config", "sampleRate": 16000}
+    
+    Server sends:
+    - {"type": "transcription", "text": "...", "chunk": 0, "is_final": false}
+    - {"type": "complete", "full_text": "...", "total_chunks": 10}
+    - {"type": "error", "message": "..."}
+    """
+    handler = LiveTranscriptionHandler()
+    await handler.handle_connection(websocket)
+@app.websocket("/ws/live-transcription-fast")
+async def websocket_live_transcription_fast(websocket: WebSocket):
+    """
+    Faster variant with 2-second chunks instead of 3
+    Better for real-time feedback but more API calls
+    """
+    processor = AudioStreamProcessor(chunk_duration=2.0)
+    await processor.process_stream(websocket)
+@app.get("/ws/health")
+def websocket_health():
+    """Check if WebSocket server is ready"""
+    return {
+        "status": "ready",
+        "websocket_endpoints": [
+            "/ws/live-transcription",
+            "/ws/live-transcription-fast"
+        ],
+        "features": {
+            "live_transcription": True,
+            "chunk_duration": "3 seconds (standard) / 2 seconds (fast)",
+            "overlap": "0.5 seconds"
+        }
+    }
 # =====================================================
 # MAIN API ENDPOINT WITH PARALLEL PROCESSING
 # =====================================================

@@ -1,4 +1,4 @@
-// Frontend/src/App.js
+// Frontend/src/App.js - UPDATED WITH LIVE TRANSCRIPTION
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
@@ -7,6 +7,7 @@ import Header from './components/layout/Header';
 import Dashboard from './pages/Dashboard';
 import MediaVault from './pages/MediaVault';
 import SegmentWorkspace from './pages/SegmentWorkspace';
+import LiveTranscriptionPage from './pages/LiveTranscriptionPage'; // NEW IMPORT
 import Notification from './components/shared/Notification';
 
 function AppContent() {
@@ -31,6 +32,11 @@ function AppContent() {
           
           {currentPage === 'segment' && (
             <SegmentWorkspace />
+          )}
+          
+          {/* NEW: Live Transcription Page */}
+          {currentPage === 'live-transcription' && (
+            <LiveTranscriptionPage setCurrentPage={setCurrentPage} />
           )}
         </div>
       </div>

@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 openai
 requests
 python-multipart
@@ -10,3 +10,7 @@ redis
 sqlalchemy
 psycopg2-binary
 alembic
+websockets
+python-multipart
+wave
+numpy

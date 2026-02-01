@@ -21,7 +21,7 @@ const Header = () => {
 
       {/* Mobile: Just logo */}
       <div className="md:hidden flex-1">
-        <span className="text-lg font-bold text-blue-600">APOTOOL</span>
+        <span className="text-lg font-bold text-blue-600">APD Tool</span>
       </div>
 
       {/* Right icons */}
