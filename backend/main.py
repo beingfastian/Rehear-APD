@@ -15,6 +15,18 @@ from fastapi import WebSocket, WebSocketDisconnect
 from websocket_handler import LiveTranscriptionHandler, AudioStreamProcessor
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
+import boto3
+from botocore.exceptions import ClientError
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from openai import OpenAI
+
+from fastapi import WebSocket, WebSocketDisconnect
+from websocket_handler import LiveTranscriptionHandler, AudioStreamProcessor
+
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")
@@ -28,14 +40,7 @@ AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
-import boto3
-from botocore.exceptions import ClientError
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from openai import OpenAI
+
 
 # Import database components
 from database import init_db, get_db, AudioJob, Instruction, AudioChunk
@@ -309,6 +314,50 @@ def get_job_details(job_id: str, db: Session = Depends(get_db)):
             }
             for c in chunks
         ]
+    }
+@app.websocket("/ws/live-transcription")
+async def websocket_live_transcription(websocket: WebSocket):
+    """
+    WebSocket endpoint for live audio transcription
+    
+    Client sends:
+    - Audio chunks as binary data
+    - Control messages as JSON: {"type": "stop"} or {"type": "config", "sampleRate": 16000}
+    
+    Server sends:
+    - {"type": "transcription", "text": "...", "chunk": 0, "is_final": false}
+    - {"type": "complete", "full_text": "...", "total_chunks": 10}
+    - {"type": "error", "message": "..."}
+    """
+    handler = LiveTranscriptionHandler()
+    await handler.handle_connection(websocket)
+
+
+@app.websocket("/ws/live-transcription-fast")
+async def websocket_live_transcription_fast(websocket: WebSocket):
+    """
+    Faster variant with 2-second chunks instead of 3
+    Better for real-time feedback but more API calls
+    """
+    processor = AudioStreamProcessor(chunk_duration=2.0)
+    await processor.process_stream(websocket)
+
+
+# Health check for WebSocket
+@app.get("/ws/health")
+def websocket_health():
+    """Check if WebSocket server is ready"""
+    return {
+        "status": "ready",
+        "websocket_endpoints": [
+            "/ws/live-transcription",
+            "/ws/live-transcription-fast"
+        ],
+        "features": {
+            "live_transcription": True,
+            "chunk_duration": "3 seconds (standard) / 2 seconds (fast)",
+            "overlap": "0.5 seconds"
+        }
     }
 
 
