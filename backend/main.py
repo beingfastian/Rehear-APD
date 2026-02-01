@@ -1,4 +1,4 @@
-# backend/main.py - PRODUCTION READY WITH MULTIPROCESSING
+# backend/main.py - PRODUCTION READY WITH PROPER CORS
 
 import os
 import asyncio
@@ -48,9 +48,9 @@ s3 = boto3.client(
     region_name=AWS_REGION,
 )
 
-# Multiprocessing setup - use CPU count for optimal performance
+# Multiprocessing setup
 CPU_COUNT = multiprocessing.cpu_count()
-MAX_WORKERS = min(CPU_COUNT * 2, 8)  # 2 workers per CPU, max 8
+MAX_WORKERS = min(CPU_COUNT * 2, 8)
 THREAD_POOL = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 PROCESS_POOL = ProcessPoolExecutor(max_workers=CPU_COUNT)
 
@@ -60,35 +60,47 @@ print(f"[INIT] Process workers: {CPU_COUNT}")
 
 app = FastAPI(
     title="Audio Instruction API",
-    description="Production-ready API with multiprocessing support",
+    description="Production-ready API with HTTPS support",
     version="2.0.0"
 )
 
 # =====================================================
-# PRODUCTION MIDDLEWARE
+# PRODUCTION CORS CONFIGURATION
 # =====================================================
 
-# CORS - Update with your production domain
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+# Get allowed origins from environment or use defaults
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else [
+    "https://apd-listener-tool.vercel.app/",
     "http://127.0.0.1:3000",
-    "https://*.vercel.app",  # Vercel preview deployments
-    "https://your-app.vercel.app",  # Your production Vercel URL
-    # Add your custom domain here
+    "https://*.vercel.app",
 ]
+
+# Add your production domains
+PRODUCTION_DOMAINS = [
+    # Add your Vercel production URL
+    "https://apd-listener-tool.vercel.app/",
+    # Add your custom domain if you have one
+    "https://yourdomain.com",
+]
+
+# Combine all allowed origins
+ALL_ALLOWED_ORIGINS = ALLOWED_ORIGINS + PRODUCTION_DOMAINS
+
+print("[CORS] Allowed origins:")
+for origin in ALL_ALLOWED_ORIGINS:
+    print(f"  - {origin}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=ALL_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"]
 )
 
-# GZip compression for better performance
+# GZip compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-
 
 # Security headers
 @app.middleware("http")
@@ -97,6 +109,11 @@ async def add_security_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Add CORS headers for preflight
+    if request.method == "OPTIONS":
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 
@@ -222,7 +239,9 @@ def health():
         "workers": {
             "threads": MAX_WORKERS,
             "processes": CPU_COUNT
-        }
+        },
+        "cors_enabled": True,
+        "https_ready": True
     }
 
 
@@ -483,17 +502,15 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
             db.add(instruction_record)
             db.flush()
 
-            # PARALLEL TTS GENERATION - Process all steps simultaneously
+            # PARALLEL TTS GENERATION
             print(f"[WORKER] Generating {len(steps)} TTS files in parallel...")
             tts_tasks = [
                 tts_to_s3_async(step, job_id, i, j)
                 for j, step in enumerate(steps)
             ]
 
-            # Wait for all TTS generations to complete
             urls = await asyncio.gather(*tts_tasks)
 
-            # Save all chunks to database
             for j, (step, url) in enumerate(zip(steps, urls)):
                 audio_chunk = AudioChunk(
                     job_id=job_id,
@@ -558,10 +575,10 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=10000,
-        workers=CPU_COUNT,  # Multiple worker processes
+        workers=CPU_COUNT,
         log_level="info",
         access_log=True,
         timeout_keep_alive=65,
-        limit_concurrency=100,  # Max concurrent connections
-        limit_max_requests=1000  # Restart worker after 1000 requests
+        limit_concurrency=100,
+        limit_max_requests=1000
     )
