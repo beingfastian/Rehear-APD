@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 requests.log
+deploy.sh
 webhook_errors.log
 steps_tts.mp3
 instruction-api-key.pem
