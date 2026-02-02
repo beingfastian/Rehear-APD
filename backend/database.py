@@ -5,15 +5,22 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load backend/.env (same folder as this file), and override any existing vars
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"), override=True)
 
-# Database URL from environment or default
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/audio_instructions"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
-# Create engine
+# Defensive cleanup if someone pasted a Neon "psql '...'" command
+if DATABASE_URL.lower().startswith("psql "):
+    DATABASE_URL = DATABASE_URL[4:].strip()
+DATABASE_URL = DATABASE_URL.strip("'").strip('"')
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is missing. Put it in backend/.env")
+
+print("[Database] Using:", DATABASE_URL)  # remove after you confirm it's correct
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
