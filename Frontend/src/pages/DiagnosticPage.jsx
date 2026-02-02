@@ -21,7 +21,7 @@ const DiagnosticPage = () => {
     };
 
     // 2. Test backend connection
-    const apiUrl = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+    const apiUrl = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
     
     try {
       const response = await fetch(`${apiUrl}/`, {

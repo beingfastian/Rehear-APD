@@ -25,7 +25,7 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
 
   // WebSocket URL - handles both development and production
   const getWebSocketURL = () => {
-    const apiUrl = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+    const apiUrl = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
     const wsUrl = process.env.REACT_APP_WS_URL;
     
     if (wsUrl) {

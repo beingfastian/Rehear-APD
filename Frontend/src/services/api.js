@@ -1,6 +1,6 @@
 // Frontend/src/services/api.js
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
 
 class ApiService {
   /**
@@ -44,7 +44,7 @@ class ApiService {
       
       // Network error (CORS, connection refused, etc)
       if (error.message === 'Failed to fetch') {
-        throw new Error('Cannot connect to server. Make sure backend is running on http://127.0.0.1:8000');
+        throw new Error('Cannot connect to server. Make sure backend is running on http://127.0.0.1:10000');
       }
       
       throw error;
@@ -143,7 +143,7 @@ class ApiService {
       return data;
     } catch (error) {
       console.error('[API] Health check failed:', error);
-      throw new Error('Cannot connect to backend. Make sure it is running on http://127.0.0.1:8000');
+      throw new Error('Cannot connect to backend. Make sure it is running on http://127.0.0.1:10000');
     }
   }
 
