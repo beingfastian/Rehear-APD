@@ -1,61 +1,27 @@
 // Frontend/src/pages/LiveTranscriptionPage.jsx
-// Dedicated page for live transcription feature
+// Live transcription with preview - actual processing happens on save
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../context/AppContext';
 import LiveTranscriptionRecorder from '../components/shared/LiveTranscriptionRecorder';
-import { FileText, Download, CheckCircle } from 'lucide-react';
+import { FileText, Zap, Database } from 'lucide-react';
 
 const LiveTranscriptionPage = ({ setCurrentPage }) => {
-  const { processRecording, showNotification } = useApp();
-  const [completedTranscription, setCompletedTranscription] = useState(null);
-  const [isProcessingInstructions, setIsProcessingInstructions] = useState(false);
+  const { showNotification } = useApp();
 
   const handleRecordingComplete = async (result) => {
-    console.log('[LiveTranscription] Recording complete:', result);
+    console.log('[LiveTranscription] Recording processed:', result);
     
-    setCompletedTranscription({
-      text: result.transcription,
-      chunks: result.chunks,
-      timestamp: new Date().toISOString()
-    });
+    // The recording has already been processed and saved to database
+    // result contains: job_id, transcription, instructions, etc.
     
-    showNotification('Live transcription complete!', 'success');
+    showNotification(
+      `Recording processed successfully! ${result.instruction_count} instructions created.`, 
+      'success'
+    );
     
-    // Optionally process the audio for instructions
-    // This will create the full job with TTS chunks
-    setIsProcessingInstructions(true);
-    
-    try {
-      const job = await processRecording(result.audioBlob);
-      showNotification('Audio processed successfully! View in Segment Workspace.', 'success');
-      
-      // Optionally navigate to segment workspace
-      // setCurrentPage('segment');
-    } catch (error) {
-      console.error('[LiveTranscription] Failed to process instructions:', error);
-      showNotification('Failed to process instructions', 'error');
-    } finally {
-      setIsProcessingInstructions(false);
-    }
-  };
-
-  const handleDownloadTranscript = () => {
-    if (!completedTranscription) return;
-    
-    const blob = new Blob([completedTranscription.text], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `live_transcript_${new Date().toISOString().slice(0, 10)}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  };
-
-  const handleStartNew = () => {
-    setCompletedTranscription(null);
+    // Optionally navigate to segment workspace to view the results
+    // setCurrentPage('segment');
   };
 
   return (
@@ -65,7 +31,7 @@ const LiveTranscriptionPage = ({ setCurrentPage }) => {
           Live Transcription
         </h1>
         <p className="text-gray-600 text-sm sm:text-base">
-          Record audio and see real-time transcription as you speak
+          See real-time transcription preview as you speak. When you save, the complete audio is processed.
         </p>
       </div>
 
@@ -73,31 +39,31 @@ const LiveTranscriptionPage = ({ setCurrentPage }) => {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mb-3">
-            <FileText className="w-5 h-5 text-blue-600" />
+            <Zap className="w-5 h-5 text-blue-600" />
           </div>
-          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Real-time</h3>
+          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Live Preview</h3>
           <p className="text-xs text-gray-600">
-            See transcription appear as you speak
+            See transcription appear in real-time as you speak
           </p>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mb-3">
-            <CheckCircle className="w-5 h-5 text-green-600" />
+            <FileText className="w-5 h-5 text-green-600" />
           </div>
-          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Accurate</h3>
+          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Full Processing</h3>
           <p className="text-xs text-gray-600">
-            Powered by OpenAI Whisper AI
+            Complete transcription, instruction detection & TTS on save
           </p>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mb-3">
-            <Download className="w-5 h-5 text-purple-600" />
+            <Database className="w-5 h-5 text-purple-600" />
           </div>
-          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Export</h3>
+          <h3 className="font-semibold text-gray-900 mb-1 text-sm">Auto-Save</h3>
           <p className="text-xs text-gray-600">
-            Download transcript when done
+            Everything saved to database with S3 audio chunks
           </p>
         </div>
       </div>
@@ -107,72 +73,86 @@ const LiveTranscriptionPage = ({ setCurrentPage }) => {
         <LiveTranscriptionRecorder onComplete={handleRecordingComplete} />
       </div>
 
-      {/* Completed Transcription */}
-      {completedTranscription && (
-        <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Completed Transcription
-            </h2>
-            
-            <div className="flex gap-2">
-              <button
-                onClick={handleDownloadTranscript}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                Download
-              </button>
-              
-              <button
-                onClick={handleStartNew}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600"
-              >
-                New Recording
-              </button>
+      {/* How It Works */}
+      <div className="mt-6 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-6">
+        <h3 className="font-semibold text-gray-900 mb-3 text-base flex items-center gap-2">
+          <span className="text-2xl">💡</span>
+          How This Works
+        </h3>
+        
+        <div className="space-y-3">
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+              1
             </div>
-          </div>
-
-          <div className="mb-4 flex items-center gap-4 text-sm text-gray-600">
-            <span>
-              <strong>Words:</strong> {completedTranscription.text.split(' ').length}
-            </span>
-            <span>
-              <strong>Characters:</strong> {completedTranscription.text.length}
-            </span>
-            <span>
-              <strong>Chunks:</strong> {completedTranscription.chunks}
-            </span>
-          </div>
-
-          <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
-              {completedTranscription.text}
-            </p>
-          </div>
-
-          {isProcessingInstructions && (
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-700">
-                Processing instructions and generating audio chunks...
+            <div>
+              <p className="font-medium text-gray-900 text-sm">Live Transcription Preview</p>
+              <p className="text-xs text-gray-600 mt-1">
+                As you speak, audio is sent in 3-second chunks for quick transcription. This gives you a real-time preview of what's being captured.
               </p>
             </div>
-          )}
-        </div>
-      )}
+          </div>
 
-      {/* Technical Info */}
-      <div className="mt-6 bg-gray-50 rounded-lg border border-gray-200 p-4">
-        <h3 className="font-semibold text-gray-900 mb-2 text-sm">
-          How it works
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+              2
+            </div>
+            <div>
+              <p className="font-medium text-gray-900 text-sm">Stop & Review</p>
+              <p className="text-xs text-gray-600 mt-1">
+                When you stop recording, you can review the live preview. This is just a preview - not the final transcription.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+              3
+            </div>
+            <div>
+              <p className="font-medium text-gray-900 text-sm">Save & Full Processing</p>
+              <p className="text-xs text-gray-600 mt-1">
+                Click "Save & Process" and the complete audio is re-transcribed for accuracy, instructions are detected with AI, TTS audio is generated for each step, and everything is saved to the database.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
+              4
+            </div>
+            <div>
+              <p className="font-medium text-gray-900 text-sm">Access Anywhere</p>
+              <p className="text-xs text-gray-600 mt-1">
+                Your processed recording appears in the Segment Workspace with all audio chunks ready to play or download.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Key Benefits */}
+      <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="font-semibold text-gray-900 mb-3 text-sm">
+          Why This Approach?
         </h3>
-        <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
-          <li>Audio is captured from your microphone in real-time</li>
-          <li>Every 3 seconds, audio chunk is sent to OpenAI Whisper for transcription</li>
-          <li>Transcription appears immediately as it's processed</li>
-          <li>Small overlap between chunks ensures no words are missed</li>
-          <li>Final transcript is assembled from all chunks</li>
-          <li>WebSocket connection ensures low-latency communication</li>
+        <ul className="text-xs text-gray-600 space-y-2">
+          <li className="flex items-start gap-2">
+            <span className="text-green-500 mt-0.5">✓</span>
+            <span><strong>Instant Feedback:</strong> See transcription in real-time so you know your audio is being captured</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-green-500 mt-0.5">✓</span>
+            <span><strong>Better Accuracy:</strong> Full audio is re-transcribed on save for maximum accuracy</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-green-500 mt-0.5">✓</span>
+            <span><strong>Complete Processing:</strong> Instruction detection and TTS only happen on confirmed recordings</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-green-500 mt-0.5">✓</span>
+            <span><strong>Save Costs:</strong> Only pay for full processing when you're sure you want to keep the recording</span>
+          </li>
         </ul>
       </div>
     </div>
