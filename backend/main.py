@@ -6,7 +6,8 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
-
+# [Add/Update these imports]
+from pydantic import BaseModel
 import boto3
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,7 +80,6 @@ def transcribe_audio(audio_path: str) -> str:
 
 def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> str:
     """Transcribe audio from bytes using OpenAI Whisper."""
-    # Create a file-like object from bytes
     audio_file = io.BytesIO(audio_bytes)
     audio_file.name = filename
 
@@ -92,7 +92,7 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> s
 
 
 def detect_instructions(transcription: str) -> dict:
-    """Use GPT to detect instructional steps from transcription."""
+    """Use GPT to detect instructional steps from transcription (Final Processing)."""
     system_prompt = """You are an AI that extracts instructional content from lecture transcriptions.
 
 Your task is to:
@@ -125,16 +125,42 @@ If no clear instructions are found, return an empty instructions array."""
     return json.loads(response.choices[0].message.content)
 
 
+def generate_live_code_preview(transcript_context: str) -> str:
+    """
+    Takes recent transcript context and attempts to write code in real-time.
+    This is for the 'Live Preview' box.
+    """
+    if not transcript_context.strip():
+        return ""
+
+    try:
+        # We use a fast, focused prompt for real-time code generation
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a real-time coding assistant listening to a programmer. Extract any code logic, syntax, or algorithms from their speech and write it as clean, executable Python code. If they are just talking and not describing code, return an empty string. Output ONLY code. Do not use markdown backticks."
+                },
+                {"role": "user", "content": transcript_context}
+            ],
+            temperature=0,
+            max_tokens=250  # Keep it short for speed
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error generating live code: {e}")
+        return ""
+
+
 def generate_tts_audio(text: str, job_id: str, instruction_idx: int, step_idx: int) -> tuple:
     """Generate TTS audio and upload to S3."""
-    # Generate audio with OpenAI TTS
     response = client.audio.speech.create(
         model="tts-1",
         voice="alloy",
         input=text
     )
 
-    # Upload to S3
     s3_key = f"tts/{job_id}/instruction_{instruction_idx}_step_{step_idx}.mp3"
 
     audio_bytes = response.read()
@@ -146,7 +172,6 @@ def generate_tts_audio(text: str, job_id: str, instruction_idx: int, step_idx: i
     )
 
     audio_url = f"https://{BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
-
     return audio_url, s3_key
 
 
@@ -203,8 +228,8 @@ async def root():
     return {
         "message": "Audio Processing API",
         "status": "running",
-        "version": "2.0",
-        "features": ["transcription", "instruction_detection", "tts", "live_transcription"]
+        "version": "2.1",
+        "features": ["transcription", "instruction_detection", "tts", "live_code_gen"]
     }
 
 
@@ -217,25 +242,18 @@ async def health_check():
 async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Analyze uploaded audio file - transcribe, detect instructions, generate TTS."""
     try:
-        # Generate unique job ID
         job_id = f"job_{uuid.uuid4().hex[:8]}"
 
-        # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
 
-        # Step 1: Transcribe audio
+        # Pipeline: Transcribe -> Detect -> Save/TTS
         transcription = transcribe_audio(tmp_path)
-
-        # Step 2: Detect instructions
         instructions_data = detect_instructions(transcription)
-
-        # Step 3: Save to database and generate TTS
         save_to_database(job_id, transcription, instructions_data, db)
 
-        # Clean up temp file
         os.unlink(tmp_path)
 
         # Format response
@@ -243,7 +261,6 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
         for idx, instruction_obj in enumerate(instructions_data.get("instructions", [])):
             steps_with_audio = []
             for step_idx, step_text in enumerate(instruction_obj.get("steps", [])):
-                # Get audio chunk from database
                 chunk = db.query(AudioChunk).filter_by(
                     job_id=job_id,
                     instruction_index=idx,
@@ -277,9 +294,7 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 
 @app.get("/jobs")
 async def get_all_jobs(db: Session = Depends(get_db)):
-    """Get all jobs from database."""
     jobs = db.query(AudioJob).order_by(AudioJob.created_at.desc()).all()
-
     return {
         "jobs": [
             {
@@ -295,7 +310,6 @@ async def get_all_jobs(db: Session = Depends(get_db)):
 
 @app.get("/jobs/{job_id}")
 async def get_job_details(job_id: str, db: Session = Depends(get_db)):
-    """Get complete job details including instructions and audio chunks."""
     job = db.query(AudioJob).filter_by(job_id=job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -334,7 +348,7 @@ async def get_job_details(job_id: str, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# LIVE TRANSCRIPTION WEBSOCKET
+# LIVE TRANSCRIPTION & CODING WEBSOCKET
 # ============================================================================
 
 class LiveTranscriptionManager:
@@ -346,25 +360,19 @@ class LiveTranscriptionManager:
     async def process_audio_chunk(self, session_id: str, audio_data: bytes) -> str:
         """Process incoming audio chunk and return transcription."""
         try:
-            # Save audio bytes to temporary file for Whisper API
             with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
                 tmp_file.write(audio_data)
                 tmp_path = tmp_file.name
 
             try:
-                # Transcribe using OpenAI Whisper
                 with open(tmp_path, 'rb') as audio_file:
                     transcript = client.audio.transcriptions.create(
                         model="whisper-1",
                         file=audio_file,
                         response_format="text"
                     )
-
-                # Return the transcribed text
                 return transcript.strip() if transcript else ""
-
             finally:
-                # Clean up temp file
                 os.unlink(tmp_path)
 
         except Exception as e:
@@ -374,13 +382,9 @@ class LiveTranscriptionManager:
             return ""
 
     async def finalize_session(self, session_id: str, audio_chunks_list: list, db: Session) -> dict:
-        """Process the complete recording using the same pipeline as regular file upload."""
+        """Process the complete recording: Transcribe -> Extract Instructions -> Chunking."""
         try:
-            # Combine all WebM audio chunks into a single file
-            # We'll save them sequentially and let ffmpeg handle the conversion
-            combined_audio_path = None
-
-            # Save all chunks to temp files
+            # Save chunks to files and combine with ffmpeg
             chunk_files = []
             for i, chunk_data in enumerate(audio_chunks_list):
                 chunk_path = f"/tmp/chunk_{session_id}_{i}.webm"
@@ -388,33 +392,27 @@ class LiveTranscriptionManager:
                     f.write(chunk_data)
                 chunk_files.append(chunk_path)
 
+            combined_audio_path = f"/tmp/combined_{session_id}.webm"
+
             try:
-                # If only one chunk, use it directly
                 if len(chunk_files) == 1:
                     combined_audio_path = chunk_files[0]
                 else:
-                    # Combine multiple chunks using ffmpeg
-                    import subprocess
-
-                    # Create concat file list
                     concat_file = f"/tmp/concat_{session_id}.txt"
                     with open(concat_file, 'w') as f:
                         for chunk_file in chunk_files:
                             f.write(f"file '{chunk_file}'\n")
 
-                    # Combine using ffmpeg
-                    combined_audio_path = f"/tmp/combined_{session_id}.webm"
+                    import subprocess
                     subprocess.run([
-                        'ffmpeg', '-f', 'concat', '-safe', '0',
+                        r'C:\ffmpeg\ffmpeg-master-latest-win64-gpl-shared\ffmpeg-master-latest-win64-gpl-shared\bin\ffmpeg.exe', '-f', 'concat', '-safe', '0',
                         '-i', concat_file, '-c', 'copy', combined_audio_path
                     ], check=True, capture_output=True)
-
                     os.unlink(concat_file)
 
-                # Now process the combined audio
+                # Process Combined Audio
                 job_id = f"live_{session_id}"
 
-                # Step 1: Transcribe full audio
                 print(f"[LiveTranscription] Transcribing full audio for session {session_id}")
                 with open(combined_audio_path, 'rb') as audio_file:
                     transcription = client.audio.transcriptions.create(
@@ -423,18 +421,15 @@ class LiveTranscriptionManager:
                         response_format="text"
                     )
 
-                print(f"[LiveTranscription] Full transcription: {transcription[:100]}...")
-
-                # Step 2: Detect instructions
+                # Step 2: Extract Instructions (The "Save & Proceed" Logic)
                 print(f"[LiveTranscription] Detecting instructions...")
                 instructions_data = detect_instructions(transcription)
-                print(f"[LiveTranscription] Found {len(instructions_data.get('instructions', []))} instructions")
 
-                # Step 3: Save to database and generate TTS (same as regular upload)
+                # Step 3: Chunking (Save to DB and generate TTS)
                 print(f"[LiveTranscription] Saving to database and generating TTS...")
                 save_to_database(job_id, transcription, instructions_data, db)
 
-                # Format response (same as regular upload)
+                # Format response
                 instructions_formatted = []
                 for idx, instruction_obj in enumerate(instructions_data.get("instructions", [])):
                     steps_with_audio = []
@@ -449,13 +444,10 @@ class LiveTranscriptionManager:
                             "text": step_text,
                             "audio": chunk.audio_url if chunk else None
                         })
-
                     instructions_formatted.append({
                         "instruction": instruction_obj.get("instruction", ""),
                         "steps": steps_with_audio
                     })
-
-                print(f"[LiveTranscription] Processing complete for session {session_id}")
 
                 return {
                     "job_id": job_id,
@@ -469,155 +461,220 @@ class LiveTranscriptionManager:
                 }
 
             finally:
-                # Clean up all temp files
                 for chunk_file in chunk_files:
                     if os.path.exists(chunk_file):
                         os.unlink(chunk_file)
-
-                if combined_audio_path and os.path.exists(combined_audio_path) and len(chunk_files) > 1:
+                if len(chunk_files) > 1 and os.path.exists(combined_audio_path):
                     os.unlink(combined_audio_path)
 
         except Exception as e:
             print(f"[LiveTranscription] Error finalizing session: {e}")
-            import traceback
-            traceback.print_exc()
             raise
 
 
 live_manager = LiveTranscriptionManager()
 
 
+# [PASTE THIS INTO main.py REPLACING THE PREVIOUS WEBSOCKET SECTION]
+
+# [PASTE THIS INTO main.py - REPLACING the 'websocket_live_transcription' function]
+
 @app.websocket("/ws/live-transcription")
 async def websocket_live_transcription(websocket: WebSocket):
-    """WebSocket endpoint for live transcription - continuous listening until user stops."""
+    """
+    Fixed Live Transcription:
+    - Accumulates audio chunks to form a valid, growing WebM stream.
+    - Sends the FULL transcription each time to avoid duplication.
+    """
     await websocket.accept()
-
     session_id = uuid.uuid4().hex[:8]
-    print(f"[LiveTranscription] Session {session_id} connected")
+    print(f"[Live] Session {session_id} Started")
 
-    # Store raw audio chunks as bytes for final processing
-    audio_chunks_list = []
-    chunk_count = 0
+    # We use a dedicated temp file for this session to accumulate audio
+    temp_filename = f"live_session_{session_id}.webm"
+    temp_filepath = os.path.join(tempfile.gettempdir(), temp_filename)
+
+    # Create/Clear the file
+    with open(temp_filepath, 'wb') as f:
+        pass
 
     try:
         while True:
-            # Receive message from client
             message = await websocket.receive()
 
             if "bytes" in message:
-                # Audio chunk received - store AND transcribe for live preview
                 audio_data = message["bytes"]
-                audio_chunks_list.append(audio_data)
-                chunk_count += 1
 
-                print(
-                    f"[LiveTranscription] Session {session_id} - Received chunk #{chunk_count}, size: {len(audio_data)} bytes")
+                # 1. APPEND new chunk to the growing session file
+                #    This effectively builds: [Header] + [Cluster 1] + [Cluster 2]...
+                with open(temp_filepath, 'ab') as f:
+                    f.write(audio_data)
 
-                # Transcribe this chunk for live preview
+                # 2. Transcribe the GROWING file
                 try:
-                    transcription = await live_manager.process_audio_chunk(session_id, audio_data)
+                    with open(temp_filepath, "rb") as audio_file:
+                        transcript_chunk = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=audio_file,
+                            language="en",
+                            response_format="text"
+                        )
 
-                    if transcription:
-                        print(f"[LiveTranscription] Session {session_id} - Transcribed: {transcription[:50]}...")
+                    text = transcript_chunk.strip()
 
-                        # Send live transcription back to client
+                    if text:
+                        # 3. Send the FULL text.
+                        # The frontend will overwrite its display with this.
                         await websocket.send_json({
-                            "type": "transcription",
-                            "text": transcription,
-                            "chunk_index": chunk_count - 1
+                            "type": "transcription_update",
+                            "text": text,
+                            "is_full_text": True
                         })
-                    else:
-                        print(
-                            f"[LiveTranscription] Session {session_id} - Empty transcription for chunk #{chunk_count}")
+                        print(f"[Live] Update: {text[:50]}...")
 
                 except Exception as e:
-                    print(f"[LiveTranscription] Error transcribing chunk #{chunk_count}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    # Ignore partial read errors while file is growing
+                    pass
 
             elif "text" in message:
-                # Control message received
                 data = json.loads(message["text"])
 
                 if data.get("action") == "stop":
-                    # Client stopped recording
-                    print(f"[LiveTranscription] Session {session_id} stopped - Total chunks: {chunk_count}")
-                    await websocket.send_json({
-                        "type": "stopped",
-                        "chunks_received": chunk_count
-                    })
+                    await websocket.send_json({"type": "stopped"})
+                    break
 
                 elif data.get("action") == "save":
-                    # Client wants to save and process - do the full pipeline
-                    print(f"[LiveTranscription] Session {session_id} - Starting full processing")
-                    print(f"[LiveTranscription] Total audio chunks to process: {len(audio_chunks_list)}")
+                    # Determine final text
+                    final_text = ""
+                    if os.path.exists(temp_filepath):
+                        with open(temp_filepath, "rb") as audio_file:
+                            final_text = client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=audio_file,
+                                language="en",
+                                response_format="text"
+                            )
 
-                    if len(audio_chunks_list) == 0:
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "No audio data received"
-                        })
-                        break
-
-                    # Get database session
-                    db = next(get_db())
-
-                    try:
-                        # Process complete recording
-                        result = await live_manager.finalize_session(session_id, audio_chunks_list, db)
-
-                        print(f"[LiveTranscription] Session {session_id} - Processing complete!")
-                        print(f"[LiveTranscription] Job ID: {result['job_id']}")
-                        print(f"[LiveTranscription] Instructions: {result['instruction_count']}")
-
-                        # Send success response with full results
-                        await websocket.send_json({
-                            "type": "completed",
-                            "data": result
-                        })
-
-                    except Exception as e:
-                        print(f"[LiveTranscription] Error during processing: {e}")
-                        import traceback
-                        traceback.print_exc()
-
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": f"Processing failed: {str(e)}"
-                        })
-                    finally:
-                        db.close()
-
-                    # Close connection after processing
+                    await websocket.send_json({
+                        "type": "completed",
+                        "data": {
+                            "job_id": f"job_{session_id}",
+                            "transcription": final_text,
+                            "instruction_count": 0,
+                            "instructions": []
+                        }
+                    })
                     break
 
                 elif data.get("action") == "discard":
-                    # Client discarded recording
-                    print(f"[LiveTranscription] Session {session_id} discarded {chunk_count} chunks")
-                    await websocket.send_json({
-                        "type": "discarded"
-                    })
+                    await websocket.send_json({"type": "discarded"})
                     break
 
     except WebSocketDisconnect:
-        print(f"[LiveTranscription] Session {session_id} disconnected")
+        print(f"[Live] Client disconnected {session_id}")
     except Exception as e:
-        print(f"[LiveTranscription] Error in session {session_id}: {e}")
-        import traceback
-        traceback.print_exc()
-
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e)
-            })
-        except:
-            pass
+        print(f"[Live] Error: {e}")
     finally:
-        # Clear memory
-        audio_chunks_list.clear()
-        print(f"[LiveTranscription] Session {session_id} cleanup complete")
+        # Cleanup the session file
+        if os.path.exists(temp_filepath):
+            try:
+                os.unlink(temp_filepath)
+            except:
+                pass
 
+
+
+
+
+# [Add this model]
+class TextSubmission(BaseModel):
+    text: str
+
+
+# [Add this NEW ENDPOINT to main.py]
+@app.post("/process-live-text")
+async def process_live_text(submission: TextSubmission, db: Session = Depends(get_db)):
+    """
+    Receives raw text from frontend.
+    1. Saves text as the 'transcription'.
+    2. Extracts ONLY logical instructions (discards filler).
+    3. Generates TTS for those chunks.
+    """
+    try:
+        # Generate Job ID
+        job_id = f"text_{uuid.uuid4().hex[:8]}"
+        transcription_text = submission.text
+
+        # 1. Detect Instructions (Strict Extraction)
+        # We adjust the prompt to be a "Filter/Extractor" rather than a "Generator"
+        system_prompt = """You are a Logic Extractor. 
+        Your ONLY job is to filter the input text and extract clear, actionable instructional steps.
+
+        RULES:
+        1. Keep the steps as close to the original phrasing as possible, just cleaned up.
+        2. DISCARD all filler words, side conversations, questions, or non-instructional commentary.
+        3. If a sentence is not an instruction, ignore it.
+
+        Return JSON format:
+        {
+            "instructions": [
+                {
+                    "instruction": "Summary of the task (e.g. 'Main Procedure')",
+                    "steps": ["Step 1", "Step 2"]
+                }
+            ]
+        }"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Extract logic from this text:\n\n{transcription_text}"}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0
+        )
+
+        instructions_data = json.loads(response.choices[0].message.content)
+
+        # 2. Save to Database & Generate TTS (Reusing existing logic)
+        # This function handles the "Audio Chunks" creation
+        save_to_database(job_id, transcription_text, instructions_data, db)
+
+        # 3. Format Response for Frontend
+        instructions_formatted = []
+        for idx, instruction_obj in enumerate(instructions_data.get("instructions", [])):
+            steps_with_audio = []
+            for step_idx, step_text in enumerate(instruction_obj.get("steps", [])):
+                chunk = db.query(AudioChunk).filter_by(
+                    job_id=job_id,
+                    instruction_index=idx,
+                    step_index=step_idx
+                ).first()
+
+                steps_with_audio.append({
+                    "text": step_text,
+                    "audio": chunk.audio_url if chunk else None
+                })
+
+            instructions_formatted.append({
+                "instruction": instruction_obj.get("instruction", ""),
+                "steps": steps_with_audio
+            })
+
+        return {
+            "job_id": job_id,
+            "transcription": transcription_text,
+            "instruction_count": len(instructions_data.get("instructions", [])),
+            "instructions": instructions_formatted,
+            "meta": {
+                "saved_to_db": True,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

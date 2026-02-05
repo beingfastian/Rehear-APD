@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Transcription WebSocket Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c00;
+            border: 1px solid #fcc;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #0a0;
+            border: 1px solid #cfc;
+        }
+
+        .status.recording {
+            background: #fef3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .transcription-box {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 20px;
+            min-height: 200px;
+            margin-bottom: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .transcription-text {
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .log-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 0;
+        }
+
+        .log-received {
+            color: #4ec9b0;
+        }
+
+        .log-sent {
+            color: #569cd6;
+        }
+
+        .log-error {
+            color: #f48771;
+        }
+
+        .log-info {
+            color: #dcdcaa;
+        }
+
+        .timer {
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #dc3545;
+            margin-bottom: 10px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Live Transcription WebSocket Test</h1>
+        <p class="subtitle">Test WebSocket connection and live transcription functionality</p>
+
+        <!-- WebSocket URL Configuration -->
+        <div class="input-group">
+            <label for="wsUrl">WebSocket URL:</label>
+            <input type="text" id="wsUrl" value="ws://127.0.0.1:10000/ws/live-transcription">
+        </div>
+
+        <!-- Status -->
+        <div id="status" class="status disconnected">
+            ❌ Disconnected
+        </div>
+
+        <!-- Timer (shown when recording) -->
+        <div id="timer" class="timer" style="display: none;">00:00</div>
+
+        <!-- Statistics -->
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="chunksCount">0</div>
+                <div class="stat-label">Chunks Sent</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="wordsCount">0</div>
+                <div class="stat-label">Words</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="charsCount">0</div>
+                <div class="stat-label">Characters</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <button id="connectBtn" class="btn-primary" onclick="connect()">Connect</button>
+            <button id="startBtn" class="btn-success" onclick="startRecording()" disabled>Start Recording</button>
+            <button id="stopBtn" class="btn-danger" onclick="stopRecording()" disabled>Stop Recording</button>
+            <button id="saveBtn" class="btn-success" onclick="saveRecording()" disabled>Save & Process</button>
+            <button id="discardBtn" class="btn-secondary" onclick="discardRecording()" disabled>Discard</button>
+            <button id="disconnectBtn" class="btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
+            <button class="btn-secondary" onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <!-- Transcription Display -->
+        <h3>Live Transcription</h3>
+        <div class="transcription-box">
+            <div id="transcription" class="transcription-text">Transcription will appear here...</div>
+        </div>
+
+        <!-- Log Display -->
+        <h3>WebSocket Log</h3>
+        <div class="log-box" id="logBox">
+            <div class="log-entry log-info">[INFO] Ready to connect...</div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let recordingStartTime = null;
+        let timerInterval = null;
+        let chunksCount = 0;
+        let transcription = '';
+
+        function log(message, type = 'info') {
+            const logBox = document.getElementById('logBox');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            logBox.appendChild(entry);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        function updateStatus(message, className) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${className}`;
+        }
+
+        function updateStats() {
+            document.getElementById('chunksCount').textContent = chunksCount;
+            document.getElementById('wordsCount').textContent = transcription.split(' ').filter(w => w).length;
+            document.getElementById('charsCount').textContent = transcription.length;
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+
+            log(`Connecting to ${url}...`, 'info');
+            updateStatus('🔄 Connecting...', 'disconnected');
+
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected successfully', 'info');
+                updateStatus('✅ Connected', 'connected');
+
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                log(`📨 Received: ${JSON.stringify(data)}`, 'received');
+
+                switch (data.type) {
+                    case 'transcription':
+                        transcription += (transcription ? ' ' : '') + data.text;
+                        document.getElementById('transcription').textContent = transcription;
+                        updateStats();
+                        break;
+
+                    case 'stopped':
+                        log(`Recording stopped. Chunks received: ${data.chunks_received}`, 'info');
+                        break;
+
+                    case 'completed':
+                        log(`✅ Processing completed! Job ID: ${data.data.job_id}`, 'info');
+                        updateStatus('✅ Processing Complete', 'connected');
+                        resetRecording();
+                        break;
+
+                    case 'discarded':
+                        log('Recording discarded', 'info');
+                        resetRecording();
+                        break;
+
+                    case 'error':
+                        log(`❌ Error: ${data.message}`, 'error');
+                        break;
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error.message || 'Connection failed'}`, 'error');
+                updateStatus('❌ Connection Error', 'disconnected');
+            };
+
+            ws.onclose = (event) => {
+                log(`🔌 WebSocket closed. Code: ${event.code}, Reason: ${event.reason || 'None'}`, 'info');
+                updateStatus('❌ Disconnected', 'disconnected');
+
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('saveBtn').disabled = true;
+                document.getElementById('discardBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = true;
+            };
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000
+                    }
+                });
+
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+
+                audioChunks = [];
+                chunksCount = 0;
+                transcription = '';
+
+                document.getElementById('transcription').textContent = '';
+                updateStats();
+
+                mediaRecorder.ondataavailable = async (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                        chunksCount++;
+                        updateStats();
+
+                        // Send to WebSocket
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const arrayBuffer = await event.data.arrayBuffer();
+                            ws.send(arrayBuffer);
+                            log(`📤 Sent audio chunk ${chunksCount} (${arrayBuffer.byteLength} bytes)`, 'sent');
+                        }
+                    }
+                };
+
+                mediaRecorder.start(3000); // Capture 3-second chunks
+                isRecording = true;
+                recordingStartTime = Date.now();
+
+                // Start timer
+                document.getElementById('timer').style.display = 'block';
+                timerInterval = setInterval(updateTimer, 1000);
+
+                updateStatus('🎙️ Recording...', 'recording');
+                log('🎙️ Started recording', 'info');
+
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+            } catch (error) {
+                log(`❌ Microphone access denied: ${error.message}`, 'error');
+                alert('Please allow microphone access to record audio.');
+            }
+        }
+
+        function updateTimer() {
+            if (!isRecording) return;
+
+            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+
+            document.getElementById('timer').textContent =
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+
+                clearInterval(timerInterval);
+                document.getElementById('timer').style.display = 'none';
+
+                // Send stop command
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ action: 'stop' }));
+                    log('📤 Sent stop command', 'sent');
+                }
+
+                updateStatus('⏸️ Recording Stopped', 'connected');
+                log('⏸️ Stopped recording', 'info');
+
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('saveBtn').disabled = false;
+                document.getElementById('discardBtn').disabled = false;
+            }
+        }
+
+        function saveRecording() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'save' }));
+                log('📤 Sent save command - processing...', 'sent');
+                updateStatus('⚙️ Processing...', 'recording');
+
+                document.getElementById('saveBtn').disabled = true;
+                document.getElementById('discardBtn').disabled = true;
+            }
+        }
+
+        function discardRecording() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: 'discard' }));
+                log('📤 Sent discard command', 'sent');
+            }
+
+            resetRecording();
+        }
+
+        function resetRecording() {
+            audioChunks = [];
+            chunksCount = 0;
+            transcription = '';
+
+            document.getElementById('transcription').textContent = 'Transcription will appear here...';
+            updateStats();
+            updateStatus('✅ Connected', 'connected');
+
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('saveBtn').disabled = true;
+            document.getElementById('discardBtn').disabled = true;
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+                log('🔌 Disconnected', 'info');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('logBox').innerHTML = '<div class="log-entry log-info">[INFO] Log cleared</div>';
+        }
+    </script>
+</body>
+</html>

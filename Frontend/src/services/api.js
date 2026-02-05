@@ -50,7 +50,38 @@ class ApiService {
       throw error;
     }
   }
+// Add this method to your ApiService class in api.js
 
+  /**
+   * Process raw text directly (Skip audio upload)
+   * @param {string} text - The live transcription text
+   * @returns {Promise<Object>} - Instructions and Audio Links
+   */
+  async processLiveText(text) {
+    console.log('[API] Processing live text...');
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/process-live-text`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Text processing failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[API] Text processed. Job ID:', data.job_id);
+      return data;
+
+    } catch (error) {
+      console.error('[API] Failed to process text:', error);
+      throw error;
+    }
+  }
   /**
    * Get all jobs from database
    * @returns {Promise<Object>} - List of all jobs
