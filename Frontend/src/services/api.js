@@ -1,18 +1,18 @@
 // Frontend/src/services/api.js
-// UPDATED: Support for instruction-based audio chunk generation
+// UPDATED: Added filterLiveChunk for real-time instruction filtering
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
 
 class ApiService {
   /**
    * Upload and analyze audio file
-   * NEW: Returns instruction-based audio chunks (one per instruction)
+   * Returns instruction-based audio chunks (one per instruction)
    * @param {File} file - Audio file to process
    * @returns {Promise<Object>} - Analysis result with transcription and instruction-based chunks
    */
   async analyzeAudio(file) {
     console.log('[API] Uploading file:', file.name, 'to', API_BASE_URL);
-    
+
     const formData = new FormData();
     formData.append('file', file);
 
@@ -20,6 +20,7 @@ class ApiService {
       const response = await fetch(`${API_BASE_URL}/analyze-audio`, {
         method: 'POST',
         body: formData,
+        // Don't set Content-Type header - browser will set it with boundary for FormData
       });
 
       console.log('[API] Response status:', response.status);
@@ -43,25 +44,25 @@ class ApiService {
 
     } catch (error) {
       console.error('[API] Request failed:', error);
-      
+
       if (error.message === 'Failed to fetch') {
         throw new Error('Cannot connect to server. Make sure backend is running on ' + API_BASE_URL);
       }
-      
+
       throw error;
     }
   }
 
   /**
-   * Process live transcription text directly
-   * NEW: Send transcription text to backend for instruction extraction and TTS generation
+   * Process live transcription text directly (Final Save)
+   * Send transcription text to backend for instruction extraction and TTS generation
    * @param {string} text - The live transcription text
    * @returns {Promise<Object>} - Instructions with audio URLs
    */
   async processLiveText(text) {
     console.log('[API] Processing live transcription text...');
     console.log('[API] Text length:', text.length, 'characters');
-    
+
     try {
       const response = await fetch(`${API_BASE_URL}/process-live-text`, {
         method: 'POST',
@@ -90,6 +91,34 @@ class ApiService {
     } catch (error) {
       console.error('[API] Failed to process text:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Fast live filtering for real-time display (NEW)
+   * Sends a sentence to the backend to check if it's an instruction
+   * @param {string} text - Raw spoken chunk
+   * @returns {Promise<Object>} - { filtered_text: "..." }
+   */
+  async filterLiveChunk(text) {
+    // Fail silently/quickly for real-time lookups if backend is down
+    try {
+      const response = await fetch(`${API_BASE_URL}/filter-live-chunk`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        return { filtered_text: "" };
+      }
+
+      return await response.json();
+    } catch (error) {
+      // Don't log error to avoid console spam during typing/speaking
+      return { filtered_text: "" };
     }
   }
 

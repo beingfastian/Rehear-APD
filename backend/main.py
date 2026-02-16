@@ -6,13 +6,16 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
-from pydantic import BaseModel
+
 import boto3
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+import wave
+import asyncio
 
 from database import init_db, get_db, AudioJob, Instruction, AudioChunk
 
@@ -153,14 +156,6 @@ IMPORTANT: Return a flat array of instruction strings, NOT objects with steps.""
 def generate_tts_audio(text: str, job_id: str, instruction_idx: int) -> tuple:
     """
     Generate TTS audio for a single instruction and upload to S3.
-
-    Args:
-        text: The instruction text
-        job_id: Unique job identifier
-        instruction_idx: Index of the instruction
-
-    Returns:
-        tuple: (audio_url, s3_key)
     """
     response = client.audio.speech.create(
         model="tts-1",
@@ -187,12 +182,6 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
     """
     NEW LOGIC: Save job and generate ONE audio chunk per instruction.
     No sub-steps - each instruction is a single audio chunk.
-
-    Args:
-        job_id: Unique job identifier
-        transcription: Full transcription text
-        instructions_data: {"instructions": ["instruction1", "instruction2", ...]}
-        db: Database session
     """
     instructions_list = instructions_data.get("instructions", [])
     instruction_count = len(instructions_list)
@@ -208,7 +197,7 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
 
     # For each instruction: save to DB + generate TTS + create audio chunk
     for idx, instruction_text in enumerate(instructions_list):
-        # Save instruction record (with instruction as a single-item array for backward compatibility)
+        # Save instruction record
         instruction = Instruction(
             job_id=job_id,
             instruction_index=idx,
@@ -220,7 +209,7 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
         # Generate TTS audio for this instruction
         audio_url, s3_key = generate_tts_audio(instruction_text, job_id, idx)
 
-        # Save audio chunk (step_index always 0 since there's only one chunk per instruction)
+        # Save audio chunk
         chunk = AudioChunk(
             job_id=job_id,
             instruction_index=idx,
@@ -243,27 +232,21 @@ async def root():
     return {
         "message": "Audio Processing API - Instruction-Based TTS",
         "status": "running",
-        "version": "3.0",
+        "version": "3.1",
         "features": [
             "audio_transcription",
             "instruction_filtering",
+            "live_filtering_chunk",
             "instruction_based_tts",
             "database_storage"
-        ],
-        "description": "Transcribes audio, filters ONLY instructions, generates one TTS chunk per instruction"
+        ]
     }
 
 
 @app.post("/analyze-audio")
 async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
-    UPDATED WORKFLOW:
-    1. Transcribe uploaded audio to text
-    2. LLM filters and extracts ONLY instructional sentences
-    3. Generate ONE TTS audio chunk per instruction
-    4. Save everything to database and S3
-
-    Returns job with instructions and audio URLs
+    Standard file upload workflow.
     """
     try:
         # Generate unique job ID
@@ -281,22 +264,19 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
             # Step 1: Transcribe audio to text
             print(f"[{job_id}] Transcribing audio...")
             transcription = transcribe_audio(temp_path)
-            print(f"[{job_id}] Transcription: {transcription[:100]}...")
 
-            # Step 2: Extract ONLY instructions (filter out non-instructional content)
+            # Step 2: Extract ONLY instructions
             print(f"[{job_id}] Extracting instructions...")
             instructions_data = detect_instructions(transcription)
             instruction_list = instructions_data.get("instructions", [])
-            print(f"[{job_id}] Found {len(instruction_list)} instructions")
 
-            # Step 3: Save to database and generate TTS for each instruction
+            # Step 3: Save to database and generate TTS
             print(f"[{job_id}] Generating TTS and saving to database...")
             save_to_database(job_id, transcription, instructions_data, db)
 
-            # Step 4: Format response for frontend
+            # Step 4: Format response
             instructions_formatted = []
             for idx, instruction_text in enumerate(instruction_list):
-                # Get the audio chunk from database
                 chunk = db.query(AudioChunk).filter_by(
                     job_id=job_id,
                     instruction_index=idx,
@@ -311,8 +291,6 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                     }]
                 })
 
-            print(f"[{job_id}] Processing complete!")
-
             return {
                 "job_id": job_id,
                 "transcription": transcription,
@@ -320,13 +298,11 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                 "instructions": instructions_formatted,
                 "meta": {
                     "saved_to_db": True,
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "audio_chunks_generated": len(instruction_list)
+                    "timestamp": datetime.utcnow().isoformat()
                 }
             }
 
         finally:
-            # Cleanup temp file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
@@ -338,11 +314,8 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 @app.post("/process-live-text")
 async def process_live_text(submission: TextSubmission, db: Session = Depends(get_db)):
     """
-    UPDATED FOR LIVE TRANSCRIPTION:
-    1. Receive transcription text from frontend
-    2. LLM filters and extracts ONLY instructional sentences
-    3. Generate ONE TTS audio chunk per instruction
-    4. Save to database and return audio URLs
+    Finalize/Save workflow for Live Transcription.
+    Takes the full collected text, filters instructions, generates TTS, and saves.
     """
     try:
         # Generate Job ID
@@ -350,16 +323,12 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
         transcription_text = submission.text
 
         print(f"[{job_id}] Processing live transcription text...")
-        print(f"[{job_id}] Text preview: {transcription_text[:100]}...")
 
-        # Step 1: Extract ONLY instructions from the transcription
-        print(f"[{job_id}] Filtering instructions...")
+        # Step 1: Extract ONLY instructions
         instructions_data = detect_instructions(transcription_text)
         instruction_list = instructions_data.get("instructions", [])
-        print(f"[{job_id}] Extracted {len(instruction_list)} instructions")
 
         # Step 2: Save to database and generate TTS
-        print(f"[{job_id}] Generating TTS and saving to database...")
         save_to_database(job_id, transcription_text, instructions_data, db)
 
         # Step 3: Format response
@@ -379,8 +348,6 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
                 }]
             })
 
-        print(f"[{job_id}] Live text processing complete!")
-
         return {
             "job_id": job_id,
             "transcription": transcription_text,
@@ -396,6 +363,51 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
     except Exception as e:
         print(f"[Error] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- NEW: Real-Time Live Filtering Endpoint ---
+@app.post("/filter-live-chunk")
+async def filter_live_chunk(submission: TextSubmission):
+    """
+    Real-time helper: Receives a single sentence/chunk of speech.
+    Returns ONLY the instructional part, or empty string if it's just filler.
+    Designed for speed (low latency).
+    """
+    try:
+        raw_text = submission.text.strip()
+        if not raw_text or len(raw_text) < 5:
+            return {"filtered_text": ""}
+
+        # Very strict, fast prompt for real-time filtering
+        system_prompt = """You are a strict Instruction Filter.
+        Input: A spoken sentence.
+        Task:
+        1. If the sentence contains a clear, actionable instruction (e.g., "Open the book", "Click the button"), extract ONLY that instruction.
+        2. If the sentence is conversational (e.g., "Hi", "How are you?", "Um, let me see"), return NOTHING (empty string).
+        3. Remove polite filler like "Please" if it makes the step clearer, but keep it natural.
+
+        Output: Just the filtered text or empty string. No JSON."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": raw_text}
+            ],
+            temperature=0,
+            max_tokens=50  # Keep it short for speed
+        )
+
+        filtered = response.choices[0].message.content.strip()
+
+        # Remove quotes if the LLM added them
+        filtered = filtered.strip('"')
+
+        return {"filtered_text": filtered}
+
+    except Exception as e:
+        print(f"Filter Error: {e}")
+        return {"filtered_text": ""}
 
 
 @app.get("/jobs")
@@ -423,15 +435,11 @@ async def get_all_jobs(db: Session = Depends(get_db)):
 async def get_job_details(job_id: str, db: Session = Depends(get_db)):
     """Get complete job details including instructions and audio chunks."""
     try:
-        # Get job
         job = db.query(AudioJob).filter_by(job_id=job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        # Get instructions
         instructions = db.query(Instruction).filter_by(job_id=job_id).order_by(Instruction.instruction_index).all()
-
-        # Get audio chunks
         audio_chunks = db.query(AudioChunk).filter_by(job_id=job_id).order_by(
             AudioChunk.instruction_index,
             AudioChunk.step_index
@@ -474,7 +482,6 @@ async def get_job_details(job_id: str, db: Session = Depends(get_db)):
 async def delete_job(job_id: str, db: Session = Depends(get_db)):
     """Delete a job and all associated data."""
     try:
-        # Get job
         job = db.query(AudioJob).filter_by(job_id=job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -487,7 +494,6 @@ async def delete_job(job_id: str, db: Session = Depends(get_db)):
             except Exception as e:
                 print(f"Warning: Failed to delete S3 object {chunk.s3_key}: {e}")
 
-        # Delete from database
         db.query(AudioChunk).filter_by(job_id=job_id).delete()
         db.query(Instruction).filter_by(job_id=job_id).delete()
         db.query(AudioJob).filter_by(job_id=job_id).delete()
@@ -504,7 +510,6 @@ async def delete_job(job_id: str, db: Session = Depends(get_db)):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
