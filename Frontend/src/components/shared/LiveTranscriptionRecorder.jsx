@@ -1,280 +1,396 @@
 // Frontend/src/components/shared/LiveTranscriptionRecorder.jsx
-// UPDATED: Real-time Instruction Filtering (Smart Mode)
+// DEBUG VERSION - shows exactly where the pipeline breaks
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Save, Trash2, Loader2, AlertCircle, Sparkles } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle, Volume2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import apiService from '../../services/api'; // Import API directly for fast chunk filtering
+import apiService from '../../services/api';
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
+const CHUNK_INTERVAL_MS = 5000;
 
 const LiveTranscriptionRecorder = ({ onComplete }) => {
-  // Use the text-based processor for the final save
-  const { processLiveTranscription } = useApp();
 
-  // State
   const [isRecording, setIsRecording] = useState(false);
-  const [instructionsList, setInstructionsList] = useState([]); // Stores ONLY filtered instructions
-  const [currentBuffer, setCurrentBuffer] = useState(''); // Shows what you are currently saying (before filtering)
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [instructionsList, setInstructionsList] = useState([]);
+  const [currentBuffer, setCurrentBuffer] = useState('');
   const [error, setError] = useState(null);
+  const [debugLog, setDebugLog] = useState([]);
 
-  // Refs
-  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const isRecordingRef = useRef(false);
+  const processFinalChunkRef = useRef(null);
   const transcriptEndRef = useRef(null);
 
-  // --- 1. Initialize Speech Recognition ---
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
+  const currentAudioRef = useRef(null);
 
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event) => {
-        let interimTranscript = '';
-
-        // Process results
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-
-          if (event.results[i].isFinal) {
-            // A sentence was finished. Send it to the Smart Filter!
-            processFinalChunk(transcript);
-          } else {
-            // Still speaking this sentence (Interim)
-            interimTranscript += transcript;
-          }
-        }
-        setCurrentBuffer(interimTranscript);
-      };
-
-      recognition.onerror = (event) => {
-        // Ignore 'no-speech' errors as they happen frequently during pauses
-        if (event.error !== 'no-speech') {
-          console.error("Speech API Error:", event.error);
-          if (event.error === 'not-allowed') {
-            setError("Microphone permission denied.");
-          } else {
-            setError(`Speech error: ${event.error}`);
-          }
-        }
-      };
-
-      recognitionRef.current = recognition;
-    } else {
-      setError("Your browser does not support Live Speech. Please use Chrome or Edge.");
-    }
-  }, []);
-
-  // --- 2. Live Filtering Logic ---
-  const processFinalChunk = async (rawText) => {
-    if (!rawText || !rawText.trim()) return;
-
-    try {
-      console.log("Analyzing chunk:", rawText);
-
-      // Call the fast backend endpoint to check if this is an instruction
-      const result = await apiService.filterLiveChunk(rawText);
-
-      if (result && result.filtered_text) {
-        // It IS an instruction! Add to our clean list.
-        console.log("Instruction detected:", result.filtered_text);
-        setInstructionsList(prev => [...prev, result.filtered_text]);
-      } else {
-        console.log("Ignored conversational filler:", rawText);
-      }
-    } catch (err) {
-      console.error("Filter failed", err);
-    }
+  const log = (msg, type = 'info') => {
+    console.log(`[DEBUG] ${msg}`);
+    setDebugLog(prev => [...prev.slice(-20), { msg, type, time: new Date().toLocaleTimeString() }]);
   };
 
-  // --- 3. Recording Controls ---
-  const startRecording = () => {
+  // --- Audio Queue ---
+  const playNext = useCallback(() => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    const url = audioQueueRef.current.shift();
+    if (!url) return;
+    isPlayingRef.current = true;
+    const audio = new Audio(url);
+    currentAudioRef.current = audio;
+    audio.onended = () => { isPlayingRef.current = false; currentAudioRef.current = null; playNext(); };
+    audio.onerror = () => { isPlayingRef.current = false; currentAudioRef.current = null; playNext(); };
+    audio.play().catch(() => { isPlayingRef.current = false; playNext(); });
+  }, []);
+
+  const queueAudio = useCallback((url) => {
+    if (!url) return;
+    audioQueueRef.current.push(url);
+    playNext();
+  }, [playNext]);
+
+  // --- Main chunk processor ---
+  const processFinalChunk = useCallback(async (audioBlob) => {
+    log(`📦 Chunk received: ${audioBlob.size} bytes, type: ${audioBlob.type}`, 'info');
+
+    if (!audioBlob || audioBlob.size < 1000) {
+      log(`⏭️ Chunk too small (${audioBlob?.size} bytes), skipping`, 'warn');
+      return;
+    }
+
+    setCurrentBuffer('transcribing...');
+
+    try {
+      // Step 1: Whisper transcription
+      log(`🎤 Sending to /transcribe-chunk...`, 'info');
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'chunk.webm');
+
+      const transcribeRes = await fetch(`${API_BASE_URL}/transcribe-chunk`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      log(`📡 /transcribe-chunk status: ${transcribeRes.status}`, transcribeRes.ok ? 'success' : 'error');
+
+      if (!transcribeRes.ok) {
+        const errText = await transcribeRes.text();
+        log(`❌ Transcribe failed: ${errText}`, 'error');
+        setCurrentBuffer('');
+        return;
+      }
+
+      const transcribeData = await transcribeRes.json();
+      log(`📝 Whisper result: "${transcribeData.text || 'empty'}"`, 'info');
+      setCurrentBuffer('');
+
+      if (!transcribeData.text || !transcribeData.text.trim()) {
+        log(`⏭️ Empty transcription, skipping`, 'warn');
+        return;
+      }
+
+      // Step 2: Filter
+      log(`🔍 Filtering: "${transcribeData.text.substring(0, 60)}"`, 'info');
+      const filterResult = await apiService.filterLiveChunk(transcribeData.text);
+      log(`🔍 Filter result: "${filterResult?.filtered_text || 'empty'}"`, filterResult?.filtered_text ? 'success' : 'warn');
+
+      if (!filterResult?.filtered_text?.trim()) {
+        log(`⏭️ Not an instruction, skipped`, 'warn');
+        return;
+      }
+
+      const instruction = filterResult.filtered_text.trim();
+      const instructionId = Date.now() + Math.random();
+
+      setInstructionsList(prev => [
+        ...prev,
+        { id: instructionId, text: instruction, status: 'saving', audioUrl: null }
+      ]);
+
+      // Step 3: Save + TTS
+      log(`💾 Saving: "${instruction}"`, 'info');
+      try {
+        const saveResult = await apiService.processLiveText(instruction);
+        const audioUrl = saveResult?.instructions?.[0]?.steps?.[0]?.audio || null;
+        log(`✅ Saved! job_id: ${saveResult.job_id}, audio: ${audioUrl ? 'yes' : 'no'}`, 'success');
+
+        setInstructionsList(prev =>
+          prev.map(item =>
+            item.id === instructionId ? { ...item, status: 'saved', audioUrl } : item
+          )
+        );
+
+        if (audioUrl) {
+          log(`🔊 Queuing audio for playback`, 'success');
+          queueAudio(audioUrl);
+        }
+
+        if (onComplete) onComplete(saveResult);
+
+      } catch (saveErr) {
+        log(`❌ Save failed: ${saveErr.message}`, 'error');
+        setInstructionsList(prev =>
+          prev.map(item =>
+            item.id === instructionId ? { ...item, status: 'error' } : item
+          )
+        );
+      }
+
+    } catch (err) {
+      log(`❌ Pipeline error: ${err.message}`, 'error');
+      setCurrentBuffer('');
+    }
+  }, [onComplete, queueAudio]);
+
+  useEffect(() => {
+    processFinalChunkRef.current = processFinalChunk;
+  }, [processFinalChunk]);
+
+  // --- Start Recording ---
+  const startRecording = async () => {
     setError(null);
     setInstructionsList([]);
-    setCurrentBuffer("");
+    setCurrentBuffer('');
+    setDebugLog([]);
+    audioQueueRef.current = [];
 
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-        setIsRecording(true);
-      } catch (err) {
-        console.error("Mic start error", err);
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+      isPlayingRef.current = false;
+    }
+
+    try {
+      log('🎙️ Requesting mic access...', 'info');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      });
+
+      streamRef.current = stream;
+      log('✅ Mic access granted', 'success');
+
+      // Detect supported mime type
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/ogg')
+        ? 'audio/ogg'
+        : '';
+
+      log(`🎞️ Using mimeType: ${mimeType || 'browser default'}`, 'info');
+
+      const options = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        log(`📦 ondataavailable fired: ${e.data?.size || 0} bytes`, 'info');
+        if (e.data && e.data.size > 1000 && isRecordingRef.current) {
+          processFinalChunkRef.current?.(e.data);
+        } else {
+          log(`⏭️ Skipped chunk: size=${e.data?.size}, recording=${isRecordingRef.current}`, 'warn');
+        }
+      };
+
+      mediaRecorder.onstart = () => log('▶️ MediaRecorder started', 'success');
+      mediaRecorder.onstop = () => log('⏹️ MediaRecorder stopped', 'warn');
+      mediaRecorder.onerror = (e) => log(`❌ MediaRecorder error: ${e.error}`, 'error');
+
+      mediaRecorder.start(CHUNK_INTERVAL_MS);
+      log(`⏱️ Recording, chunk every ${CHUNK_INTERVAL_MS / 1000}s`, 'info');
+
+      isRecordingRef.current = true;
+      setIsRecording(true);
+
+    } catch (err) {
+      log(`❌ Mic failed: ${err.name} - ${err.message}`, 'error');
+      if (err.name === 'NotAllowedError') {
+        setError('Microphone permission denied. Please allow mic access.');
+      } else {
+        setError('Could not start recording: ' + err.message);
       }
     }
   };
 
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    log('⏹️ Stop pressed', 'warn');
+    isRecordingRef.current = false;
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
     }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+
     setIsRecording(false);
-    setCurrentBuffer(""); // Clear buffer on stop
+    setCurrentBuffer('');
   };
 
   const handleDiscard = () => {
     stopRecording();
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+      isPlayingRef.current = false;
+    }
+    audioQueueRef.current = [];
     setInstructionsList([]);
-    setCurrentBuffer("");
+    setCurrentBuffer('');
     setError(null);
+    setDebugLog([]);
   };
 
-  // --- 4. Save & Process (TEXT ONLY) ---
-  const handleSave = async () => {
-    // Validation
-    if (instructionsList.length === 0) {
-      setError("No valid instructions detected. Please speak some actionable steps.");
-      return;
-    }
-
-    setIsProcessing(true);
-
-    try {
-      // Combine the filtered list into a full text block
-      // We send this to the main processor to generate the Audio/TTS structure properly
-      const fullText = instructionsList.join(". ");
-      console.log("Saving filtered logic:", fullText);
-
-      const result = await processLiveTranscription(fullText);
-
-      console.log("Success:", result);
-      if (onComplete) {
-        onComplete(result);
-      }
-
-      // Reset after success
-      setInstructionsList([]);
-
-    } catch (err) {
-      console.error(err);
-      setError("Processing Failed: " + err.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Auto-scroll
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [instructionsList, currentBuffer]);
+
+  useEffect(() => {
+    return () => {
+      isRecordingRef.current = false;
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
+
+  const savedCount = instructionsList.filter(i => i.status === 'saved').length;
+  const savingCount = instructionsList.filter(i => i.status === 'saving').length;
+  const errorCount = instructionsList.filter(i => i.status === 'error').length;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
 
-      {/* Header / Status */}
+      {/* Header */}
       <div className="flex items-center justify-between bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
         <div>
           <h2 className="text-lg font-bold flex items-center gap-2 text-gray-800">
             <Sparkles className={`w-5 h-5 ${isRecording ? 'text-blue-500' : 'text-gray-400'}`} />
             Smart Instruction Filter
           </h2>
-          <p className="text-xs text-gray-500">I listen to everything, but I only write down instructions.</p>
+          <p className="text-xs text-gray-500">
+            Powered by Whisper — accurate transcription every {CHUNK_INTERVAL_MS / 1000}s.
+          </p>
         </div>
-        {isRecording && (
-          <div className="flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold animate-pulse">
-            <span className="w-2 h-2 bg-red-600 rounded-full"></span>
-            LISTENING
-          </div>
-        )}
+
+        <div className="flex items-center gap-3">
+          {instructionsList.length > 0 && (
+            <div className="text-xs text-right">
+              {savedCount > 0 && <div className="text-green-600 font-medium">✅ {savedCount} saved</div>}
+              {savingCount > 0 && <div className="text-blue-500 animate-pulse">💾 {savingCount} saving...</div>}
+              {errorCount > 0 && <div className="text-red-500">❌ {errorCount} failed</div>}
+            </div>
+          )}
+          {isRecording && (
+            <div className="flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold animate-pulse">
+              <span className="w-2 h-2 bg-red-600 rounded-full"></span>
+              RECORDING
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Error Message */}
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center gap-3 animate-in fade-in">
-          <AlertCircle className="text-red-600 w-5 h-5" />
+        <div className="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center gap-3">
+          <AlertCircle className="text-red-600 w-5 h-5 flex-shrink-0" />
           <span className="text-red-700 text-sm">{error}</span>
         </div>
       )}
 
-      {/* The "Magic" Transcription Box */}
-      <div className="bg-white border border-gray-200 rounded-lg h-96 flex flex-col p-6 overflow-y-auto shadow-inner relative">
+      {/* Debug Panel */}
+      {debugLog.length > 0 && (
+        <div className="bg-gray-900 text-xs font-mono rounded-lg p-3 max-h-48 overflow-y-auto space-y-1">
+          <div className="text-gray-400 mb-1 font-bold">DEBUG LOG</div>
+          {debugLog.map((entry, i) => (
+            <div key={i} className={
+              entry.type === 'error' ? 'text-red-400' :
+              entry.type === 'success' ? 'text-green-400' :
+              entry.type === 'warn' ? 'text-yellow-400' :
+              'text-gray-300'
+            }>
+              [{entry.time}] {entry.msg}
+            </div>
+          ))}
+        </div>
+      )}
 
-        {/* Placeholder state */}
+      {/* Transcription Box */}
+      <div className="bg-white border border-gray-200 rounded-lg h-80 flex flex-col p-6 overflow-y-auto shadow-inner">
+
         {instructionsList.length === 0 && !currentBuffer && (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-300 select-none">
             <Mic className="w-16 h-16 mb-4 opacity-20" />
             <p className="text-xl font-medium">Ready to start.</p>
-            <p className="text-sm mt-2">"Hi! <span className="text-blue-400 font-bold">Open the file.</span> How are you?"</p>
-            <p className="text-xs mt-1 text-gray-400">(I will only capture "Open the file")</p>
+            <p className="text-sm mt-2">Speak naturally — results appear every {CHUNK_INTERVAL_MS / 1000} seconds.</p>
           </div>
         )}
 
         <div className="space-y-4">
-          {/* 1. Render the Filtered Instructions (The "Real" content) */}
-          {instructionsList.map((inst, idx) => (
-            <div key={idx} className="flex items-start gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="min-w-[28px] h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5 shadow-sm">
+          {instructionsList.map((item, idx) => (
+            <div key={item.id} className="flex items-start gap-3">
+              <div className="min-w-[28px] h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">
                 {idx + 1}
               </div>
-              <p className="text-lg text-gray-800 font-medium leading-relaxed border-b border-gray-50 pb-2 w-full">
-                {inst}
+              <p className="text-lg text-gray-800 font-medium leading-relaxed flex-1 border-b border-gray-50 pb-2">
+                {item.text}
               </p>
+              <div className="mt-1 flex-shrink-0 flex items-center gap-1">
+                {item.status === 'saving' && <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />}
+                {item.status === 'saved' && <><CheckCircle className="w-4 h-4 text-green-500" /><Volume2 className="w-4 h-4 text-blue-400" /></>}
+                {item.status === 'error' && <AlertCircle className="w-4 h-4 text-red-400" />}
+              </div>
             </div>
           ))}
 
-          {/* 2. Render the "Ghost" Buffer (What you are currently saying) */}
           {currentBuffer && (
-            <div className="flex items-start gap-3 opacity-50">
-              <div className="min-w-[28px] h-7 flex items-center justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-              </div>
-              <p className="text-lg text-gray-400 italic leading-relaxed">
-                {currentBuffer}...
-              </p>
+            <div className="flex items-center gap-3 opacity-50">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+              <p className="text-sm text-gray-400 italic">{currentBuffer}</p>
             </div>
           )}
         </div>
 
         <div ref={transcriptEndRef} />
-
-        {/* Loading Overlay */}
-        {isProcessing && (
-          <div className="absolute inset-0 bg-white/90 flex flex-col items-center justify-center z-10 backdrop-blur-sm">
-            <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-            <h3 className="text-lg font-bold text-gray-800">Finalizing Logic...</h3>
-            <p className="text-sm text-gray-500">Generating audio steps</p>
-          </div>
-        )}
       </div>
 
       {/* Controls */}
       <div className="flex justify-center gap-4 py-4">
-        {!isRecording && !isProcessing && (
-          <button
-            onClick={startRecording}
-            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2"
-          >
-            <Mic className="w-6 h-6" /> {instructionsList.length > 0 ? "RESUME" : "START"}
+        {!isRecording && (
+          <button onClick={startRecording}
+            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg flex items-center gap-2">
+            <Mic className="w-6 h-6" />
+            {instructionsList.length > 0 ? 'RESUME' : 'START'}
           </button>
         )}
 
         {isRecording && (
-          <button
-            onClick={stopRecording}
-            className="px-8 py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-full font-bold shadow-lg flex items-center gap-2"
-          >
-            <Square className="w-5 h-5" /> PAUSE
+          <button onClick={stopRecording}
+            className="px-8 py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-full font-bold shadow-lg flex items-center gap-2">
+            <Square className="w-5 h-5" /> STOP
           </button>
         )}
 
-        {!isRecording && instructionsList.length > 0 && !isProcessing && (
-          <div className="flex gap-4">
-             <button
-              onClick={handleDiscard}
-              className="px-6 py-4 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-full font-bold shadow-sm flex items-center gap-2"
-            >
-              <Trash2 className="w-5 h-5" /> DISCARD
-            </button>
-            <button
-              onClick={handleSave}
-              className="px-8 py-4 bg-green-600 hover:bg-green-700 text-white rounded-full font-bold shadow-lg flex items-center gap-2"
-            >
-              <Save className="w-6 h-6" /> SAVE STEPS
-            </button>
-          </div>
+        {!isRecording && instructionsList.length > 0 && (
+          <button onClick={handleDiscard}
+            className="px-6 py-4 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-full font-bold shadow-sm flex items-center gap-2">
+            <Trash2 className="w-5 h-5" /> DISCARD
+          </button>
         )}
       </div>
+
     </div>
   );
 };

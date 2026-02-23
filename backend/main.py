@@ -365,6 +365,80 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Whisper Chunk Transcription for Live Recording ---
+@app.post("/transcribe-chunk")
+async def transcribe_chunk(file: UploadFile = File(...)):
+    """
+    Receives a small audio chunk from the live recorder (every 5 seconds).
+    Uses Whisper for accurate transcription - much better than browser STT.
+    Converts webm/opus to wav via ffmpeg before sending to Whisper.
+    """
+    import subprocess
+
+    try:
+        audio_bytes = await file.read()
+
+        if len(audio_bytes) < 1000:
+            return {"text": ""}
+
+        print(f"[transcribe-chunk] Received {len(audio_bytes)} bytes, content-type: {file.content_type}")
+
+        # Step 1: Save raw webm bytes to temp file
+        # Use delete=False and close BEFORE running ffmpeg
+        # On Windows, NamedTemporaryFile locks the file while open — ffmpeg can't read it
+        tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
+        tmp_in.write(audio_bytes)
+        tmp_in.close()  # MUST close before ffmpeg can read it on Windows
+        input_path = tmp_in.name
+        output_path = input_path.replace(".webm", ".wav")
+
+        try:
+            # Step 2: Convert webm/opus → wav using ffmpeg
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", input_path,
+                 "-ar", "16000", "-ac", "1", "-f", "wav", output_path],
+                capture_output=True,
+                timeout=30
+            )
+
+            print(f"[transcribe-chunk] ffmpeg returncode: {result.returncode}")
+
+            if result.returncode == 0 and os.path.exists(output_path):
+                # ffmpeg succeeded — send clean wav to Whisper
+                print(f"[transcribe-chunk] ffmpeg OK, sending wav to Whisper")
+                loop = asyncio.get_event_loop()
+                transcription = await loop.run_in_executor(
+                    None, transcribe_audio, output_path
+                )
+            else:
+                # ffmpeg failed — send raw bytes with explicit tuple format (filename, bytes, content_type)
+                print(f"[transcribe-chunk] ffmpeg failed: {result.stderr.decode()[:300]}")
+                print(f"[transcribe-chunk] Trying raw bytes fallback...")
+                loop = asyncio.get_event_loop()
+                transcription = await loop.run_in_executor(
+                    None,
+                    lambda: client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=("audio.webm", io.BytesIO(audio_bytes), "audio/webm"),
+                        response_format="text"
+                    )
+                )
+
+            print(f"[Whisper Chunk] Transcribed: {str(transcription)[:100]}")
+            return {"text": str(transcription).strip()}
+
+        finally:
+            if os.path.exists(input_path):
+                os.unlink(input_path)
+            if os.path.exists(output_path):
+                try: os.unlink(output_path)
+                except: pass
+
+    except Exception as e:
+        print(f"[transcribe-chunk error] {str(e)}")
+        return {"text": ""}
+
+
 # --- NEW: Real-Time Live Filtering Endpoint ---
 @app.post("/filter-live-chunk")
 async def filter_live_chunk(submission: TextSubmission):
