@@ -1,26 +1,34 @@
 // Frontend/src/pages/LiveTranscriptionPage.jsx
+// UPDATED: onSessionComplete → set currentJob in context → navigate to segment workspace
 
 import React from 'react';
-// FIX: Correct import path (one level up to src/context)
-import { useApp } from '../context/AppContext'; 
+import { useApp } from '../context/AppContext';
 import LiveTranscriptionRecorder from '../components/shared/LiveTranscriptionRecorder';
 
 const LiveTranscriptionPage = ({ setCurrentPage }) => {
-  const { showNotification } = useApp();
+  const { showNotification, setCurrentJob } = useApp();
 
+  // Called each time a single instruction is saved (existing behaviour)
   const handleRecordingComplete = (result) => {
-    console.log('[LivePage] Recording processed:', result);
-    
-    // The result contains { instruction_count, transcription, etc. }
-    const count = result.instruction_count || 0;
-    
+    console.log('[LivePage] Instruction saved:', result.job_id);
+  };
+
+  // Called once after STOP + all saves finish — navigate to SegmentWorkspace
+  const handleSessionComplete = (sessionJob) => {
+    console.log('[LivePage] Session complete:', sessionJob);
+
+    // Put the combined session job into global context so SegmentWorkspace can read it
+    // We call the raw setter here (not selectJob) because the job is already fully formed
+    // with instructions + audio URLs — no DB fetch needed
+    setCurrentJob(sessionJob);
+
     showNotification(
-      `Success! ${count} instruction${count !== 1 ? 's' : ''} extracted from your speech.`, 
+      `${sessionJob.instructions.length} instruction${sessionJob.instructions.length !== 1 ? 's' : ''} ready — opening workspace`,
       'success'
     );
-    
-    // Optional: Auto-redirect to the segment workspace to view the result
-    // setCurrentPage('segment');
+
+    // Small delay so the user sees the "DONE" banner before navigating
+    setTimeout(() => setCurrentPage('segment'), 800);
   };
 
   return (
@@ -30,45 +38,15 @@ const LiveTranscriptionPage = ({ setCurrentPage }) => {
           Live Transcription
         </h1>
         <p className="text-gray-600 text-sm sm:text-base">
-          Speak naturally. The AI will listen, filter out filler words, and generate concise instructional audio steps instantly.
+          Speak naturally. Instructions are extracted in real time, then automatically
+          opened in the Segment Workspace for playback.
         </p>
       </div>
 
-      {/* The Recorder Component */}
-      <LiveTranscriptionRecorder onComplete={handleRecordingComplete} />
-
-      {/* Key Benefits Section */}
-      <div className="mt-8 bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="font-semibold text-gray-900 mb-3 text-sm uppercase tracking-wide">
-          How it works
-        </h3>
-        <ul className="text-sm text-gray-600 space-y-3">
-          <li className="flex items-start gap-3">
-            <div className="bg-blue-100 p-1 rounded-full mt-0.5">
-              <span className="text-blue-600 font-bold text-xs">1</span>
-            </div>
-            <span><strong>Live Preview:</strong> Your browser generates text instantly while you speak.</span>
-          </li>
-          <li className="flex items-start gap-3">
-            <div className="bg-blue-100 p-1 rounded-full mt-0.5">
-              <span className="text-blue-600 font-bold text-xs">2</span>
-            </div>
-            <span><strong>Smart Filter:</strong> When you click Save, the text is sent to the AI.</span>
-          </li>
-          <li className="flex items-start gap-3">
-            <div className="bg-blue-100 p-1 rounded-full mt-0.5">
-              <span className="text-blue-600 font-bold text-xs">3</span>
-            </div>
-            <span><strong>Logic Extraction:</strong> The AI discards filler words ("um", "uh") and keeps only the instructions.</span>
-          </li>
-          <li className="flex items-start gap-3">
-            <div className="bg-green-100 p-1 rounded-full mt-0.5">
-              <span className="text-green-600 font-bold text-xs">4</span>
-            </div>
-            <span><strong>Instant Audio:</strong> High-quality TTS is generated for every instruction step.</span>
-          </li>
-        </ul>
-      </div>
+      <LiveTranscriptionRecorder
+        onComplete={handleRecordingComplete}
+        onSessionComplete={handleSessionComplete}
+      />
     </div>
   );
 };

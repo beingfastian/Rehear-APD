@@ -1,30 +1,47 @@
 // Frontend/src/components/shared/LiveTranscriptionRecorder.jsx
-// OPTIMIZED: Fix #3 — Optimistic UI shows instruction instantly before API confirms
+// NEW: onSessionComplete prop — after STOP + all saves finish, builds a combined job
+//      and calls onSessionComplete(sessionJob) so the parent can navigate to SegmentWorkspace
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle2, Volume2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle2, Volume2, ArrowRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
 
-const LiveTranscriptionRecorder = ({ onComplete }) => {
+const SILENCE_DEBOUNCE_MS = 2500;
+
+const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const { showNotification } = useApp();
 
-  // State
   const [isRecording, setIsRecording] = useState(false);
   const [instructionsList, setInstructionsList] = useState([]);
-  // Each item: { id, text, status: 'filtering' | 'saving' | 'saved' | 'error' | 'ignored', isPlaying: bool }
   const [currentBuffer, setCurrentBuffer] = useState('');
+  const [pendingText, setPendingText] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [isSessionComplete, setIsSessionComplete] = useState(false); // show "Open Workspace" button
   const [error, setError] = useState(null);
 
-  // Refs
   const recognitionRef = useRef(null);
   const transcriptEndRef = useRef(null);
-  const currentAudioRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const pendingTextRef = useRef('');
 
-  // --- 1. Initialize Speech Recognition ---
+  // ─── Audio queue refs ──────────────────────────────────────────────────────
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
+  const currentAudioRef = useRef(null);
+  const audioUnlockedRef = useRef(false);
+
+  // ─── Session tracking refs ─────────────────────────────────────────────────
+  // Accumulates saved instruction objects { text, audioUrl } as they complete
+  const sessionInstructionsRef = useRef([]);
+  // Counts saves currently in-flight
+  const pendingSavesRef = useRef(0);
+  // Set to true when STOP is clicked — triggers navigation once saves drain to 0
+  const stopRequestedRef = useRef(false);
+
+  // ─── 1. INIT SPEECH RECOGNITION ───────────────────────────────────────────
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
@@ -33,12 +50,15 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
 
       recognition.onresult = (event) => {
         let interimTranscript = '';
-
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
-
           if (event.results[i].isFinal) {
-            processFinalChunk(transcript);
+            const updated = (pendingTextRef.current + ' ' + transcript).trim();
+            pendingTextRef.current = updated;
+            setPendingText(updated);
+            setCurrentBuffer('');
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(flushPendingBuffer, SILENCE_DEBOUNCE_MS);
           } else {
             interimTranscript += transcript;
           }
@@ -48,12 +68,8 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
 
       recognition.onerror = (event) => {
         if (event.error !== 'no-speech') {
-          console.error('Speech API Error:', event.error);
-          if (event.error === 'not-allowed') {
-            setError('Microphone permission denied.');
-          } else {
-            setError(`Speech error: ${event.error}`);
-          }
+          if (event.error === 'not-allowed') setError('Microphone permission denied.');
+          else setError(`Speech error: ${event.error}`);
         }
       };
 
@@ -61,116 +77,190 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
     } else {
       setError('Your browser does not support Live Speech. Please use Chrome or Edge.');
     }
+    return () => clearTimeout(silenceTimerRef.current);
   }, []);
 
-  // --- 2. FIX #3: Optimistic UI + Filter + Save + Play ---
-  const processFinalChunk = async (rawText) => {
-    if (!rawText || !rawText.trim()) return;
+  // ─── 2. SESSION COMPLETE CHECK ─────────────────────────────────────────────
+  // Called after every save completes. If STOP was pressed and no saves are
+  // in-flight, the session is done — build the job and notify the parent.
+  const checkSessionComplete = useCallback(() => {
+    if (
+      stopRequestedRef.current &&
+      pendingSavesRef.current === 0 &&
+      !isExtracting &&
+      sessionInstructionsRef.current.length > 0
+    ) {
+      const sessionJob = {
+        id: `live_session_${Date.now()}`,
+        name: `Live Session — ${new Date().toLocaleTimeString()}`,
+        type: 'Live Transcription',
+        duration: '00:00',
+        status: 'Completed',
+        transcription: sessionInstructionsRef.current.map(i => i.text).join('. '),
+        fromLive: true, // ← tells SegmentWorkspace to auto-play on mount
+        instructions: sessionInstructionsRef.current.map(inst => ({
+          instruction: inst.text,
+          steps: [{ text: inst.text, audio: inst.audioUrl }],
+        })),
+      };
 
-    // FIX #3: Show text on screen INSTANTLY — don't wait for the API
-    // This removes the visible delay between speaking and seeing the text
-    const newId = Date.now();
-    setInstructionsList(prev => [
-      ...prev,
-      { id: newId, text: rawText.trim(), status: 'filtering', isPlaying: false }
-    ]);
-    setCurrentBuffer('');
-
-    try {
-      console.log('[Filter] Analyzing chunk:', rawText);
-
-      // Step 1: Check if instruction (GPT call #1 — the only GPT call now)
-      const result = await apiService.filterLiveChunk(rawText);
-
-      if (!result || !result.filtered_text) {
-        // Not an instruction — remove it from the list silently
-        console.log('[Filter] Ignored filler:', rawText);
-        setInstructionsList(prev => prev.filter(item => item.id !== newId));
-        return;
-      }
-
-      const instruction = result.filtered_text;
-      console.log('[Filter] Confirmed instruction:', instruction);
-
-      // Update text to cleaned version and mark as saving
-      setInstructionsList(prev =>
-        prev.map(item =>
-          item.id === newId ? { ...item, text: instruction, status: 'saving' } : item
-        )
-      );
-
-      // Step 2: Save to S3 (no second GPT call — backend skips detect_instructions now)
-      try {
-        const saveResult = await apiService.processLiveText(instruction);
-        console.log('[S3] Saved! Job ID:', saveResult.job_id);
-
-        // Mark as saved
-        setInstructionsList(prev =>
-          prev.map(item =>
-            item.id === newId ? { ...item, status: 'saved' } : item
-          )
-        );
-
-        // Step 3: Auto-play TTS audio immediately
-        const audioUrl = saveResult.instructions?.[0]?.steps?.[0]?.audio;
-        if (audioUrl) {
-          playAudio(audioUrl, newId);
-        }
-
-        if (onComplete) onComplete(saveResult);
-
-      } catch (saveErr) {
-        console.error('[S3] Save failed:', saveErr);
-        setInstructionsList(prev =>
-          prev.map(item =>
-            item.id === newId ? { ...item, status: 'error' } : item
-          )
-        );
-      }
-
-    } catch (err) {
-      console.error('[Filter] Failed:', err);
-      // Remove the optimistic entry on total failure
-      setInstructionsList(prev => prev.filter(item => item.id !== newId));
+      setIsSessionComplete(true);
+      if (onSessionComplete) onSessionComplete(sessionJob);
     }
-  };
+  }, [isExtracting, onSessionComplete]);
 
-  // --- 3. Play Audio ---
-  const playAudio = (audioUrl, instructionId) => {
-    // Stop any currently playing audio first
+  // Re-check after isExtracting flips to false (flush just finished)
+  useEffect(() => {
+    if (!isExtracting) checkSessionComplete();
+  }, [isExtracting, checkSessionComplete]);
+
+  // ─── 3. AUDIO QUEUE ───────────────────────────────────────────────────────
+  const processAudioQueue = useCallback(() => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+
+    const { url, itemId } = audioQueueRef.current.shift();
+    isPlayingRef.current = true;
+
+    const audio = new Audio(url);
+    currentAudioRef.current = audio;
+
+    setInstructionsList(prev =>
+      prev.map(item => item.id === itemId ? { ...item, isPlaying: true } : item)
+    );
+
+    audio.play()
+      .then(() => console.log('[Audio] Playing'))
+      .catch(err => {
+        console.error('[Audio] Blocked:', err);
+        isPlayingRef.current = false;
+        currentAudioRef.current = null;
+        setInstructionsList(prev =>
+          prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
+        );
+        processAudioQueue();
+      });
+
+    audio.onended = () => {
+      isPlayingRef.current = false;
+      currentAudioRef.current = null;
+      setInstructionsList(prev =>
+        prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
+      );
+      processAudioQueue();
+    };
+  }, []);
+
+  const enqueueAudio = useCallback((url, itemId) => {
+    audioQueueRef.current.push({ url, itemId });
+    processAudioQueue();
+  }, [processAudioQueue]);
+
+  const replayAudio = useCallback((url, itemId) => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
+    isPlayingRef.current = false;
+    audioQueueRef.current = [];
+    enqueueAudio(url, itemId);
+  }, [enqueueAudio]);
 
-    const audio = new Audio(audioUrl);
-    currentAudioRef.current = audio;
+  // ─── 4. FLUSH BUFFER → GPT EXTRACTION ─────────────────────────────────────
+  const flushPendingBuffer = useCallback(async () => {
+    const text = pendingTextRef.current.trim();
+    if (!text || text.length < 5) return;
 
-    setInstructionsList(prev =>
-      prev.map(item =>
-        item.id === instructionId ? { ...item, isPlaying: true } : item
-      )
-    );
+    pendingTextRef.current = '';
+    setPendingText('');
+    setIsExtracting(true);
 
-    audio.play().catch(err => {
-      console.error('[Audio] Playback failed:', err);
-    });
+    try {
+      const result = await apiService.filterLiveChunk(text);
+      const instructions = result?.instructions || [];
 
-    audio.onended = () => {
+      if (instructions.length === 0) return;
+
+      const newItems = instructions.map(instructionText => ({
+        id: Date.now() + Math.random(),
+        text: instructionText,
+        status: 'saving',
+        isPlaying: false,
+        audioUrl: null,
+      }));
+
+      setInstructionsList(prev => [...prev, ...newItems]);
+
+      // Sequential save so audio plays in correct order
+      for (const item of newItems) {
+        await saveInstruction(item.id, item.text);
+      }
+
+    } catch (err) {
+      console.error('[Flush] Failed:', err);
+    } finally {
+      setIsExtracting(false);
+    }
+  }, []);
+
+  // ─── 5. SAVE SINGLE INSTRUCTION ───────────────────────────────────────────
+  const saveInstruction = async (itemId, instructionText) => {
+    pendingSavesRef.current++;
+
+    try {
+      const saveResult = await apiService.processLiveText(instructionText);
+      const audioUrl = saveResult.instructions?.[0]?.steps?.[0]?.audio || null;
+
       setInstructionsList(prev =>
         prev.map(item =>
-          item.id === instructionId ? { ...item, isPlaying: false } : item
+          item.id === itemId
+            ? { ...item, status: 'saved', audioUrl }
+            : item
         )
       );
-      currentAudioRef.current = null;
-    };
+
+      // Accumulate into session
+      sessionInstructionsRef.current.push({ text: instructionText, audioUrl });
+
+      if (audioUrl) enqueueAudio(audioUrl, itemId);
+
+      if (onComplete) onComplete(saveResult);
+
+    } catch (err) {
+      console.error('[S3] Save failed:', err);
+      setInstructionsList(prev =>
+        prev.map(item =>
+          item.id === itemId ? { ...item, status: 'error' } : item
+        )
+      );
+    } finally {
+      pendingSavesRef.current--;
+      checkSessionComplete();
+    }
   };
 
-  // --- 4. Recording Controls ---
+  // ─── 6. RECORDING CONTROLS ────────────────────────────────────────────────
+  const unlockAudio = () => {
+    if (!audioUnlockedRef.current) {
+      const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+      silent.play().catch(() => {});
+      audioUnlockedRef.current = true;
+    }
+  };
+
   const startRecording = () => {
+    unlockAudio();
     setError(null);
+    setIsSessionComplete(false);
     setInstructionsList([]);
     setCurrentBuffer('');
+    setPendingText('');
+    pendingTextRef.current = '';
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    sessionInstructionsRef.current = [];
+    pendingSavesRef.current = 0;
+    stopRequestedRef.current = false;
+    clearTimeout(silenceTimerRef.current);
 
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -188,32 +278,50 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
   };
 
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    if (recognitionRef.current) recognitionRef.current.stop();
+    clearTimeout(silenceTimerRef.current);
     setIsRecording(false);
     setCurrentBuffer('');
-    // Nothing to save — every instruction was already saved as it was spoken
+
+    // Mark that stop was requested — checkSessionComplete will fire when saves drain
+    stopRequestedRef.current = true;
+
+    // Flush any remaining buffered speech, then check
+    if (pendingTextRef.current.trim()) {
+      flushPendingBuffer().then(() => checkSessionComplete());
+    } else {
+      checkSessionComplete();
+    }
   };
 
   const handleDiscard = () => {
-    stopRecording();
+    if (recognitionRef.current) recognitionRef.current.stop();
+    clearTimeout(silenceTimerRef.current);
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
+    pendingTextRef.current = '';
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    sessionInstructionsRef.current = [];
+    pendingSavesRef.current = 0;
+    stopRequestedRef.current = false;
     setInstructionsList([]);
     setCurrentBuffer('');
+    setPendingText('');
+    setIsRecording(false);
+    setIsSessionComplete(false);
     setError(null);
   };
 
   // Auto-scroll
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [instructionsList, currentBuffer]);
+  }, [instructionsList, currentBuffer, pendingText]);
 
-  const savingCount = instructionsList.filter(i => i.status === 'saving' || i.status === 'filtering').length;
   const savedCount = instructionsList.filter(i => i.status === 'saved').length;
+  const stillSaving = instructionsList.some(i => i.status === 'saving') || isExtracting;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -225,128 +333,109 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
             <Sparkles className={`w-5 h-5 ${isRecording ? 'text-blue-500' : 'text-gray-400'}`} />
             Smart Instruction Filter
           </h2>
-          <p className="text-xs text-gray-500">
-            Instructions appear instantly, saved to S3, and played automatically.
+          <p className="text-xs text-gray-500 mt-0.5">
+            Speak naturally — instructions appear after each pause, played in order.
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          {savedCount > 0 && (
-            <div className="flex items-center gap-1 px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-bold">
-              <CheckCircle2 className="w-3 h-3" />
-              {savedCount} saved
-            </div>
-          )}
-          {savingCount > 0 && (
-            <div className="flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-bold animate-pulse">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Processing...
-            </div>
-          )}
-          {isRecording && (
-            <div className="flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold animate-pulse">
-              <span className="w-2 h-2 bg-red-600 rounded-full"></span>
-              LISTENING
-            </div>
-          )}
+        <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
+          isRecording ? 'bg-red-100 text-red-700 animate-pulse'
+          : isExtracting || stillSaving ? 'bg-yellow-100 text-yellow-700'
+          : isSessionComplete ? 'bg-green-100 text-green-700'
+          : 'bg-gray-100 text-gray-500'
+        }`}>
+          {isRecording ? '● RECORDING'
+           : isExtracting ? '⟳ EXTRACTING...'
+           : stillSaving ? '⟳ SAVING...'
+           : isSessionComplete ? '✓ DONE'
+           : '○ IDLE'}
         </div>
       </div>
 
-      {/* Error */}
       {error && (
-        <div className="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center gap-3">
-          <AlertCircle className="text-red-600 w-5 h-5" />
-          <span className="text-red-700 text-sm">{error}</span>
+        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {error}
         </div>
       )}
 
-      {/* Transcription Box */}
-      <div className="bg-white border border-gray-200 rounded-lg h-96 flex flex-col p-6 overflow-y-auto shadow-inner relative">
+      {/* Session complete banner */}
+      {isSessionComplete && (
+        <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
+          <p className="text-sm font-medium text-green-800">
+            ✅ {savedCount} instruction{savedCount !== 1 ? 's' : ''} ready — opening workspace...
+          </p>
+          <ArrowRight className="w-4 h-4 text-green-600 animate-bounce" />
+        </div>
+      )}
 
-        {/* Empty state */}
-        {instructionsList.length === 0 && !currentBuffer && (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-300 select-none">
-            <Mic className="w-16 h-16 mb-4 opacity-20" />
-            <p className="text-xl font-medium">Ready to start.</p>
-            <p className="text-sm mt-2">
-              "Hi! <span className="text-blue-400 font-bold">Go to class.</span> How are you?"
-            </p>
-            <p className="text-xs mt-1 text-gray-400">
-              "Go to class" → appears instantly → saved → plays 🔊
+      {/* Instructions area */}
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm min-h-[200px] max-h-[400px] overflow-y-auto p-4 space-y-3">
+
+        {instructionsList.length === 0 && !currentBuffer && !pendingText && !isExtracting && (
+          <p className="text-center text-gray-400 text-sm mt-8">
+            {isRecording ? 'Speak now...' : 'Press START and speak your instructions.'}
+          </p>
+        )}
+
+        {instructionsList.map((item) => (
+          <div key={item.id} className="flex items-start gap-3">
+            <div className="min-w-[28px] h-7 flex items-center justify-center mt-0.5">
+              {item.status === 'saving' ? (
+                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+              ) : item.status === 'saved' ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-red-400" />
+              )}
+            </div>
+            <p className={`flex-1 text-base leading-relaxed ${
+              item.status === 'saved' ? 'text-gray-800' :
+              item.status === 'error' ? 'text-red-600' : 'text-gray-500'
+            }`}>{item.text}</p>
+            {item.status === 'saved' && item.audioUrl && (
+              <button
+                onClick={() => replayAudio(item.audioUrl, item.id)}
+                className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0"
+                title="Replay"
+              >
+                <Volume2 className={`w-4 h-4 ${item.isPlaying ? 'text-blue-500' : ''}`} />
+              </button>
+            )}
+          </div>
+        ))}
+
+        {pendingText && !isExtracting && (
+          <div className="flex items-start gap-3 opacity-50">
+            <div className="min-w-[28px] h-7 flex items-center justify-center">
+              <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse" />
+            </div>
+            <p className="text-base text-orange-700 italic">
+              {pendingText}
+              <span className="text-xs text-orange-400 ml-2">(processing in {SILENCE_DEBOUNCE_MS / 1000}s...)</span>
             </p>
           </div>
         )}
 
-        <div className="space-y-3">
+        {isExtracting && (
+          <div className="flex items-center gap-3 opacity-60">
+            <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+            <p className="text-sm text-blue-500 italic">Extracting instructions...</p>
+          </div>
+        )}
 
-          {instructionsList.map((inst, idx) => (
-            <div
-              key={inst.id}
-              className={`flex items-start gap-3 rounded-lg p-2 transition-all duration-300 ${
-                inst.isPlaying ? 'bg-blue-50' : ''
-              } ${inst.status === 'filtering' ? 'opacity-60' : 'opacity-100'}`}
-            >
-              {/* Index badge */}
-              <div className="min-w-[28px] h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5 shadow-sm flex-shrink-0">
-                {idx + 1}
-              </div>
-
-              {/* Instruction text */}
-              <p className="text-lg text-gray-800 font-medium leading-relaxed flex-1 border-b border-gray-100 pb-2">
-                {inst.text}
-              </p>
-
-              {/* Per-instruction status */}
-              <div className="flex-shrink-0 mt-1 min-w-[90px] text-right">
-                {inst.status === 'filtering' && (
-                  <span className="flex items-center justify-end gap-1 text-xs text-gray-400 animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Checking...
-                  </span>
-                )}
-                {inst.status === 'saving' && (
-                  <span className="flex items-center justify-end gap-1 text-xs text-blue-500 animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Saving...
-                  </span>
-                )}
-                {inst.status === 'saved' && inst.isPlaying && (
-                  <span className="flex items-center justify-end gap-1 text-xs text-blue-600 font-medium animate-pulse">
-                    <Volume2 className="w-3 h-3" /> Playing...
-                  </span>
-                )}
-                {inst.status === 'saved' && !inst.isPlaying && (
-                  <span className="flex items-center justify-end gap-1 text-xs text-green-600">
-                    <CheckCircle2 className="w-3 h-3" /> Saved
-                  </span>
-                )}
-                {inst.status === 'error' && (
-                  <span className="flex items-center justify-end gap-1 text-xs text-red-500">
-                    <AlertCircle className="w-3 h-3" /> Failed
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {/* Ghost buffer */}
-          {currentBuffer && (
-            <div className="flex items-start gap-3 opacity-40">
-              <div className="min-w-[28px] h-7 flex items-center justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-              </div>
-              <p className="text-lg text-gray-400 italic leading-relaxed">
-                {currentBuffer}...
-              </p>
-            </div>
-          )}
-        </div>
+        {currentBuffer && (
+          <div className="flex items-start gap-3 opacity-40">
+            <Loader2 className="w-4 h-4 animate-spin text-gray-400 mt-1" />
+            <p className="text-lg text-gray-400 italic">{currentBuffer}...</p>
+          </div>
+        )}
 
         <div ref={transcriptEndRef} />
       </div>
 
-      {/* Controls — no SAVE button */}
+      {/* Controls */}
       <div className="flex justify-center gap-4 py-4">
-
-        {!isRecording && (
+        {!isRecording && !isSessionComplete && (
           <button
             onClick={startRecording}
             className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2"
@@ -355,7 +444,6 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
             {instructionsList.length > 0 ? 'RESUME' : 'START'}
           </button>
         )}
-
         {isRecording && (
           <button
             onClick={stopRecording}
@@ -364,8 +452,7 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
             <Square className="w-5 h-5" /> STOP
           </button>
         )}
-
-        {!isRecording && instructionsList.length > 0 && (
+        {!isRecording && instructionsList.length > 0 && !isSessionComplete && (
           <button
             onClick={handleDiscard}
             className="px-6 py-4 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-full font-bold shadow-sm flex items-center gap-2"
@@ -374,14 +461,6 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
           </button>
         )}
       </div>
-
-      {/* Footer summary */}
-      {!isRecording && savedCount > 0 && (
-        <p className="text-center text-sm text-green-600 font-medium">
-          ✅ {savedCount} instruction{savedCount !== 1 ? 's' : ''} saved to S3 and played.
-        </p>
-      )}
-
     </div>
   );
 };

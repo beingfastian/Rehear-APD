@@ -1,4 +1,6 @@
-// Frontend/src/pages/SegmentWorkspace.jsx - AUDIO PLAYBACK FIXED
+// Frontend/src/pages/SegmentWorkspace.jsx
+// UPDATED: Auto-plays all steps in sequence when currentJob.fromLive === true
+//          (i.e., navigated here from the Live Transcription page)
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Search, Play, Pause, ChevronLeft, ChevronRight, Download, Loader2, AlertCircle } from 'lucide-react';
@@ -16,13 +18,26 @@ const SegmentWorkspace = () => {
   const audioRef = useRef(new Audio());
   const hasTriedToPlay = useRef(false);
 
+  // ─── Auto-play ref ─────────────────────────────────────────────────────────
+  // Set to true when the job comes from Live Transcription.
+  // Stays true across step changes so every step auto-plays in sequence.
+  // Set to false if the user manually pauses.
+  const shouldAutoPlayRef = useRef(false);
+
+  // Reset auto-play flag and step index whenever a new job is loaded
+  useEffect(() => {
+    setCurrentStepIndex(0);
+    shouldAutoPlayRef.current = !!currentJob?.fromLive;
+    console.log('[AutoPlay] fromLive:', currentJob?.fromLive, '→ shouldAutoPlay:', shouldAutoPlayRef.current);
+  }, [currentJob?.id]);
+
   // Flatten all steps for playback
   const allSteps = currentJob?.instructions?.flatMap((inst, instIdx) =>
     inst.steps.map((step, stepIdx) => ({
       ...step,
       instructionTitle: inst.instruction,
       instIdx,
-      stepIdx
+      stepIdx,
     }))
   ) || [];
 
@@ -36,147 +51,118 @@ const SegmentWorkspace = () => {
     }
 
     console.log('[Audio] Loading step:', currentStepIndex, currentStep.audio);
-    
-    // Reset states
+
     setIsLoadingAudio(true);
     setAudioError(null);
     setIsPlaying(false);
     hasTriedToPlay.current = false;
-    
-    // Stop current audio
+
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
-    
-    // Configure audio element
-    audioRef.current.crossOrigin = "anonymous";
-    audioRef.current.preload = "auto";
+    audioRef.current.crossOrigin = 'anonymous';
+    audioRef.current.preload = 'auto';
     audioRef.current.src = currentStep.audio;
 
-    // Event handlers
-    const handleLoadStart = () => {
-      console.log('[Audio] Loading started');
-      setIsLoadingAudio(true);
-    };
+    const handleLoadStart    = () => setIsLoadingAudio(true);
+    const handleLoadedData   = () => { setIsLoadingAudio(false); setAudioError(null); };
+    const handleLoadedMetadata = () => setDuration(audioRef.current.duration);
+    const handleTimeUpdate   = () => setCurrentTime(audioRef.current.currentTime);
+    const handleWaiting      = () => setIsLoadingAudio(true);
+    const handlePlaying      = () => setIsLoadingAudio(false);
 
-    const handleLoadedData = () => {
-      console.log('[Audio] Data loaded successfully');
+    const handleCanPlay = () => {
+      console.log('[Audio] Can play');
       setIsLoadingAudio(false);
-      setAudioError(null);
-    };
 
-    const handleLoadedMetadata = () => {
-      const audioDuration = audioRef.current.duration;
-      console.log('[Audio] Duration:', audioDuration);
-      setDuration(audioDuration);
-    };
-
-    const handleTimeUpdate = () => {
-      setCurrentTime(audioRef.current.currentTime);
+      // ✅ Auto-play if this job was sent from Live Transcription
+      if (shouldAutoPlayRef.current && !hasTriedToPlay.current) {
+        hasTriedToPlay.current = true;
+        audioRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+            console.log('[AutoPlay] Started step', currentStepIndex + 1);
+          })
+          .catch(err => {
+            console.error('[AutoPlay] Blocked:', err);
+            // Autoplay blocked — user will need to press Play manually
+            shouldAutoPlayRef.current = false;
+          });
+      }
     };
 
     const handleEnded = () => {
-      console.log('[Audio] Playback ended');
+      console.log('[Audio] Ended');
       setIsPlaying(false);
-      
-      // Only auto-advance if we successfully played
+
       if (!audioError && currentStepIndex < allSteps.length - 1) {
         setTimeout(() => {
-          console.log('[Audio] Auto-advancing to next step');
+          console.log('[Audio] Advancing to step', currentStepIndex + 2);
+          // Keep shouldAutoPlayRef true so the next step also auto-plays
           setCurrentStepIndex(prev => prev + 1);
         }, 500);
       }
     };
 
-    const handleError = (e) => {
-      console.error('[Audio] Error:', e);
-      const errorMsg = audioRef.current.error 
+    const handleError = () => {
+      const errorMsg = audioRef.current.error
         ? `Error ${audioRef.current.error.code}: ${getAudioErrorMessage(audioRef.current.error.code)}`
         : 'Failed to load audio';
-      
       setAudioError(errorMsg);
       setIsLoadingAudio(false);
       setIsPlaying(false);
     };
 
-    const handleCanPlay = () => {
-      console.log('[Audio] Can play - ready to start');
-      setIsLoadingAudio(false);
-    };
+    audioRef.current.addEventListener('loadstart',       handleLoadStart);
+    audioRef.current.addEventListener('loadeddata',      handleLoadedData);
+    audioRef.current.addEventListener('loadedmetadata',  handleLoadedMetadata);
+    audioRef.current.addEventListener('timeupdate',      handleTimeUpdate);
+    audioRef.current.addEventListener('ended',           handleEnded);
+    audioRef.current.addEventListener('error',           handleError);
+    audioRef.current.addEventListener('canplay',         handleCanPlay);
+    audioRef.current.addEventListener('waiting',         handleWaiting);
+    audioRef.current.addEventListener('playing',         handlePlaying);
 
-    const handleWaiting = () => {
-      console.log('[Audio] Waiting for data...');
-      setIsLoadingAudio(true);
-    };
-
-    const handlePlaying = () => {
-      console.log('[Audio] Playing');
-      setIsLoadingAudio(false);
-    };
-
-    // Attach event listeners
-    audioRef.current.addEventListener('loadstart', handleLoadStart);
-    audioRef.current.addEventListener('loadeddata', handleLoadedData);
-    audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
-    audioRef.current.addEventListener('ended', handleEnded);
-    audioRef.current.addEventListener('error', handleError);
-    audioRef.current.addEventListener('canplay', handleCanPlay);
-    audioRef.current.addEventListener('waiting', handleWaiting);
-    audioRef.current.addEventListener('playing', handlePlaying);
-
-    // Load the audio
     audioRef.current.load();
 
-    // Cleanup
     return () => {
-      audioRef.current.removeEventListener('loadstart', handleLoadStart);
-      audioRef.current.removeEventListener('loadeddata', handleLoadedData);
-      audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-      audioRef.current.removeEventListener('ended', handleEnded);
-      audioRef.current.removeEventListener('error', handleError);
-      audioRef.current.removeEventListener('canplay', handleCanPlay);
-      audioRef.current.removeEventListener('waiting', handleWaiting);
-      audioRef.current.removeEventListener('playing', handlePlaying);
+      audioRef.current.removeEventListener('loadstart',       handleLoadStart);
+      audioRef.current.removeEventListener('loadeddata',      handleLoadedData);
+      audioRef.current.removeEventListener('loadedmetadata',  handleLoadedMetadata);
+      audioRef.current.removeEventListener('timeupdate',      handleTimeUpdate);
+      audioRef.current.removeEventListener('ended',           handleEnded);
+      audioRef.current.removeEventListener('error',           handleError);
+      audioRef.current.removeEventListener('canplay',         handleCanPlay);
+      audioRef.current.removeEventListener('waiting',         handleWaiting);
+      audioRef.current.removeEventListener('playing',         handlePlaying);
       audioRef.current.pause();
     };
   }, [currentStepIndex, currentStep?.audio, allSteps.length, audioError]);
 
-  const getAudioErrorMessage = (errorCode) => {
-    switch (errorCode) {
-      case 1: return 'MEDIA_ERR_ABORTED - Download aborted';
-      case 2: return 'MEDIA_ERR_NETWORK - Network error';
-      case 3: return 'MEDIA_ERR_DECODE - Decode error';
-      case 4: return 'MEDIA_ERR_SRC_NOT_SUPPORTED - Format not supported or CORS issue';
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+  const getAudioErrorMessage = (code) => {
+    switch (code) {
+      case 1: return 'MEDIA_ERR_ABORTED';
+      case 2: return 'MEDIA_ERR_NETWORK';
+      case 3: return 'MEDIA_ERR_DECODE';
+      case 4: return 'MEDIA_ERR_SRC_NOT_SUPPORTED';
       default: return 'Unknown error';
     }
   };
 
   const togglePlay = async () => {
-    if (audioError) {
-      console.log('[Audio] Cannot play due to error:', audioError);
-      return;
-    }
-
-    if (isLoadingAudio) {
-      console.log('[Audio] Still loading, please wait');
-      return;
-    }
+    if (audioError || isLoadingAudio) return;
 
     if (isPlaying) {
-      console.log('[Audio] Pausing');
       audioRef.current.pause();
       setIsPlaying(false);
+      shouldAutoPlayRef.current = false; // user paused — stop auto-play sequence
     } else {
-      console.log('[Audio] Attempting to play');
       hasTriedToPlay.current = true;
-      
       try {
         await audioRef.current.play();
         setIsPlaying(true);
-        console.log('[Audio] Playing successfully');
+        shouldAutoPlayRef.current = true; // user resumed — re-enable auto-advance
       } catch (err) {
-        console.error('[Audio] Play failed:', err);
         setAudioError(`Playback failed: ${err.message}`);
         setIsPlaying(false);
       }
@@ -184,27 +170,14 @@ const SegmentWorkspace = () => {
   };
 
   const playStep = async (index) => {
-    console.log('[Audio] Switching to step:', index);
-    
-    // Stop current playback
     audioRef.current.pause();
     setIsPlaying(false);
-    
-    // Change step
+    shouldAutoPlayRef.current = true; // clicking a step should also auto-continue
     setCurrentStepIndex(index);
   };
 
-  const previousStep = () => {
-    if (currentStepIndex > 0) {
-      playStep(currentStepIndex - 1);
-    }
-  };
-
-  const nextStep = () => {
-    if (currentStepIndex < allSteps.length - 1) {
-      playStep(currentStepIndex + 1);
-    }
-  };
+  const previousStep = () => { if (currentStepIndex > 0) playStep(currentStepIndex - 1); };
+  const nextStep     = () => { if (currentStepIndex < allSteps.length - 1) playStep(currentStepIndex + 1); };
 
   const formatTime = (seconds) => {
     if (isNaN(seconds)) return '0:00';
@@ -236,21 +209,15 @@ const SegmentWorkspace = () => {
 
   const seekToPosition = (e) => {
     if (audioError || isLoadingAudio) return;
-    
-    const progressBar = e.currentTarget;
-    const rect = progressBar.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percentage = x / rect.width;
-    audioRef.current.currentTime = percentage * duration;
+    const rect = e.currentTarget.getBoundingClientRect();
+    audioRef.current.currentTime = ((e.clientX - rect.left) / rect.width) * duration;
   };
 
   const testAudioURL = () => {
-    if (currentStep?.audio) {
-      console.log('[Debug] Testing audio URL:', currentStep.audio);
-      window.open(currentStep.audio, '_blank');
-    }
+    if (currentStep?.audio) window.open(currentStep.audio, '_blank');
   };
 
+  // ─── Empty state ───────────────────────────────────────────────────────────
   if (!currentJob) {
     return (
       <div className="p-4 sm:p-6">
@@ -265,36 +232,36 @@ const SegmentWorkspace = () => {
 
   return (
     <div className="p-4 sm:p-6">
-      <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 sm:mb-6 truncate">
-        {currentJob.name}
-      </h1>
+
+      {/* Title + auto-play badge */}
+      <div className="flex items-center gap-3 mb-4 sm:mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate flex-1">
+          {currentJob.name}
+        </h1>
+        {currentJob.fromLive && (
+          <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full whitespace-nowrap flex-shrink-0">
+            ▶ Auto-playing
+          </span>
+        )}
+      </div>
 
       {/* Pipeline Status */}
       <div className="flex gap-2 mb-4 sm:mb-6 overflow-x-auto pb-2">
-        <button className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 whitespace-nowrap flex-shrink-0">
-          <Mic className="w-3 h-3 sm:w-4 sm:h-4" /> Audio Ingestion
-        </button>
-        <button className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap flex-shrink-0">
-          Whisper Transcription
-        </button>
-        <button className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap flex-shrink-0">
-          Logical Segmenting
-        </button>
-        <button className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap flex-shrink-0">
-          Final Synth Chunks
-        </button>
+        {['Audio Ingestion', 'Whisper Transcription', 'Logical Segmenting', 'TTS Generation', 'Final Synth Chunks'].map(label => (
+          <button key={label} className="px-3 sm:px-4 py-2 bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap flex-shrink-0">
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Responsive Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        
-        {/* Left column */}
+
+        {/* Left column — Player */}
         <div className="lg:col-span-2 space-y-4 sm:space-y-6 order-2 lg:order-1">
 
-          {/* Audio Player */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
-            
-            {/* Error Display */}
+
             {audioError && (
               <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
                 <div className="flex items-start gap-2">
@@ -303,96 +270,64 @@ const SegmentWorkspace = () => {
                     <p className="text-sm font-medium text-red-800 mb-1">Audio Playback Error</p>
                     <p className="text-xs text-red-700 mb-2">{audioError}</p>
                     <div className="flex gap-2">
-                      <button
-                        onClick={testAudioURL}
-                        className="text-xs text-red-600 hover:text-red-700 underline"
-                      >
-                        Test URL in new tab
-                      </button>
-                      <button
-                        onClick={() => playStep(currentStepIndex)}
-                        className="text-xs text-red-600 hover:text-red-700 underline"
-                      >
-                        Retry
-                      </button>
+                      <button onClick={testAudioURL} className="text-xs text-red-600 underline">Test URL</button>
+                      <button onClick={() => playStep(currentStepIndex)} className="text-xs text-red-600 underline">Retry</button>
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Loading Indicator */}
             {isLoadingAudio && !audioError && (
               <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Loading audio...
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading audio...
               </div>
             )}
 
-            {/* Progress Bar */}
+            {/* Progress bar */}
             <div className="flex items-center gap-2 sm:gap-4 mb-3 sm:mb-4">
-              <div 
+              <div
                 className={`flex-1 bg-gray-200 rounded-full h-2 ${!audioError && !isLoadingAudio ? 'cursor-pointer' : ''}`}
                 onClick={seekToPosition}
               >
-                <div 
-                  className="bg-blue-500 h-2 rounded-full transition-all" 
-                  style={{ width: `${(currentTime / duration) * 100 || 0}%` }} 
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all"
+                  style={{ width: `${(currentTime / duration) * 100 || 0}%` }}
                 />
               </div>
             </div>
 
-            {/* Playback Controls */}
+            {/* Controls */}
             <div className="flex items-center justify-center gap-3 sm:gap-4">
-              <button 
-                onClick={previousStep} 
-                disabled={currentStepIndex === 0}
-                className="disabled:opacity-30"
-              >
-                <ChevronLeft className={`w-5 h-5 sm:w-6 sm:h-6 ${
-                  currentStepIndex === 0
-                    ? 'text-gray-300 cursor-not-allowed' 
-                    : 'text-gray-600 cursor-pointer hover:text-blue-600'
-                }`} />
+              <button onClick={previousStep} disabled={currentStepIndex === 0} className="disabled:opacity-30">
+                <ChevronLeft className={`w-5 h-5 sm:w-6 sm:h-6 ${currentStepIndex === 0 ? 'text-gray-300' : 'text-gray-600 hover:text-blue-600'}`} />
               </button>
-              
-              <button 
-                onClick={togglePlay} 
-                disabled={isLoadingAudio || audioError}
-                className="disabled:opacity-50"
-              >
+
+              <button onClick={togglePlay} disabled={isLoadingAudio || !!audioError} className="disabled:opacity-50">
                 {isLoadingAudio ? (
                   <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin text-blue-600" />
                 ) : isPlaying ? (
-                  <Pause className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600 hover:text-blue-700" />
+                  <Pause className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 hover:text-blue-700" />
                 ) : (
-                  <Play className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer text-blue-600 hover:text-blue-700" />
+                  <Play className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 hover:text-blue-700" />
                 )}
               </button>
-              
-              <button 
-                onClick={nextStep} 
-                disabled={currentStepIndex === allSteps.length - 1}
-                className="disabled:opacity-30"
-              >
-                <ChevronRight className={`w-5 h-5 sm:w-6 sm:h-6 ${
-                  currentStepIndex === allSteps.length - 1
-                    ? 'text-gray-300 cursor-not-allowed' 
-                    : 'text-gray-600 cursor-pointer hover:text-blue-600'
-                }`} />
+
+              <button onClick={nextStep} disabled={currentStepIndex === allSteps.length - 1} className="disabled:opacity-30">
+                <ChevronRight className={`w-5 h-5 sm:w-6 sm:h-6 ${currentStepIndex === allSteps.length - 1 ? 'text-gray-300' : 'text-gray-600 hover:text-blue-600'}`} />
               </button>
             </div>
 
-            {/* Time Display */}
-            <div className="flex flex-col sm:flex-row justify-between items-center mt-3 sm:mt-4 gap-2 text-xs sm:text-sm text-gray-600">
+            {/* Time */}
+            <div className="flex justify-between items-center mt-3 text-xs sm:text-sm text-gray-600">
               <span className="font-mono">{formatTime(currentTime)}</span>
-              <span className="text-center text-xs text-gray-500 px-2 truncate max-w-xs">
+              <span className="text-xs text-gray-500 truncate max-w-xs px-2">
                 Step {currentStepIndex + 1}/{allSteps.length}: {currentStep?.text}
               </span>
               <span className="font-mono">{formatTime(duration)}</span>
             </div>
 
-            {/* Debug Info */}
+            {/* Debug */}
             <div className="mt-3 pt-3 border-t border-gray-200">
               <details className="text-xs text-gray-500">
                 <summary className="cursor-pointer hover:text-gray-700">Debug Info</summary>
@@ -400,53 +335,43 @@ const SegmentWorkspace = () => {
                   <p>URL: {currentStep?.audio?.substring(0, 60)}...</p>
                   <p>Loading: {isLoadingAudio ? 'Yes' : 'No'}</p>
                   <p>Error: {audioError || 'None'}</p>
-                  <p>Ready State: {audioRef.current?.readyState}</p>
-                  <p>Network State: {audioRef.current?.networkState}</p>
+                  <p>AutoPlay: {shouldAutoPlayRef.current ? 'On' : 'Off'}</p>
                 </div>
               </details>
             </div>
           </div>
 
-          {/* Download Transcript */}
+          {/* Download transcript */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
-            <button 
+            <button
               onClick={handleDownloadTranscript}
               className="w-full px-3 sm:px-4 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-gray-50 flex items-center justify-center gap-2"
             >
-              <Download className="w-4 h-4" />
-              Download Full Transcript
+              <Download className="w-4 h-4" /> Download Full Transcript
             </button>
           </div>
 
           {/* Transcription */}
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <div className="relative mb-4">
-              <Search className="w-4 h-4 sm:w-5 sm:h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search transcription..."
-                className="w-full pl-9 sm:pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
-
-            <div className="space-y-3 sm:space-y-4 max-h-64 sm:max-h-96 overflow-y-auto">
-              <div className="p-3 sm:p-4 rounded-lg bg-gray-50">
-                <h4 className="font-semibold text-gray-900 mb-2 text-sm sm:text-base">Full Transcription</h4>
-                <p className="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap">
-                  {currentJob.transcription}
-                </p>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              <div className="p-3 rounded-lg bg-gray-50">
+                <h4 className="font-semibold text-gray-900 mb-2 text-sm">Full Transcription</h4>
+                <p className="text-xs sm:text-sm text-gray-700 whitespace-pre-wrap">{currentJob.transcription}</p>
               </div>
-
               {currentJob.instructions?.map((inst, idx) => (
-                <div key={idx} className="p-3 sm:p-4 rounded-lg bg-blue-50 border-l-4 border-blue-500">
-                  <p className="text-xs sm:text-sm font-semibold text-blue-900 mb-2">
-                    Instruction {idx + 1}: {inst.instruction}
-                  </p>
-                  <div className="ml-2 sm:ml-4 space-y-1">
+                <div key={idx} className="p-3 rounded-lg bg-blue-50 border-l-4 border-blue-500">
+                  <p className="text-xs font-semibold text-blue-900 mb-2">Instruction {idx + 1}: {inst.instruction}</p>
+                  <div className="ml-2 space-y-1">
                     {inst.steps.map((step, stepIdx) => (
-                      <p key={stepIdx} className="text-xs sm:text-sm text-gray-700">
-                        • {step.text}
-                      </p>
+                      <p key={stepIdx} className="text-xs text-gray-700">• {step.text}</p>
                     ))}
                   </div>
                 </div>
@@ -455,13 +380,12 @@ const SegmentWorkspace = () => {
           </div>
         </div>
 
-        {/* Right column - Learning Modules */}
+        {/* Right column — Step list */}
         <div className="space-y-4 sm:space-y-6 order-1 lg:order-2">
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4">
             <h3 className="font-semibold text-gray-900 mb-3 sm:mb-4 text-sm sm:text-base">
               AI-Generated Learning Modules ({allSteps.length} steps)
             </h3>
-
             <div className="space-y-2 sm:space-y-3 max-h-[400px] sm:max-h-[600px] overflow-y-auto">
               {allSteps.map((step, index) => (
                 <div
@@ -473,33 +397,26 @@ const SegmentWorkspace = () => {
                   }`}
                   onClick={() => index !== currentStepIndex && playStep(index)}
                 >
-                  <h4 className="font-medium text-gray-900 mb-1 text-xs sm:text-sm">
-                    Step {index + 1}
-                  </h4>
-                  <p className="text-xs text-gray-600 mb-2">
-                    {step.instructionTitle}
-                  </p>
-                  <p className="text-xs sm:text-sm text-gray-700 mb-2 sm:mb-3">
-                    {step.text}
-                  </p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h4 className="font-medium text-gray-900 text-xs sm:text-sm">Step {index + 1}</h4>
+                    {index === currentStepIndex && isPlaying && (
+                      <span className="text-xs text-blue-600 font-semibold animate-pulse">▶ Playing</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600 mb-2">{step.instructionTitle}</p>
+                  <p className="text-xs sm:text-sm text-gray-700 mb-2">{step.text}</p>
                   <div className="flex gap-2">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        playStep(index);
-                      }}
-                      className="flex-1 px-2 sm:px-3 py-1.5 sm:py-2 bg-blue-500 text-white rounded text-xs sm:text-sm hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-1"
+                    <button
+                      onClick={(e) => { e.stopPropagation(); playStep(index); }}
+                      className="flex-1 px-2 sm:px-3 py-1.5 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 flex items-center justify-center gap-1"
                     >
-                      <Play className="w-3 h-3 sm:w-4 sm:h-4" /> Play
+                      <Play className="w-3 h-3" /> Play
                     </button>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownloadStep(step.audio, step.text);
-                      }}
-                      className="px-2 sm:px-3 py-1.5 sm:py-2 border border-gray-300 rounded text-xs sm:text-sm hover:bg-gray-50"
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDownloadStep(step.audio, step.text); }}
+                      className="px-2 sm:px-3 py-1.5 border border-gray-300 rounded text-xs hover:bg-gray-50"
                     >
-                      <Download className="w-3 h-3 sm:w-4 sm:h-4" />
+                      <Download className="w-3 h-3" />
                     </button>
                   </div>
                 </div>

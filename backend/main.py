@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import tempfile
 import uuid
@@ -351,40 +352,72 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
 @app.post("/filter-live-chunk")
 async def filter_live_chunk(submission: TextSubmission):
     """
-    Real-time filter: checks if a spoken sentence is an instruction.
-    Returns the cleaned instruction text or empty string.
+    Batch instruction extractor.
+    Receives a full paragraph of speech (accumulated over a silence window)
+    and returns ALL actionable instructions found within it as a JSON array.
+    Conversational filler, greetings, and questions are discarded.
     """
+    raw_output = ""  # declared outside try so except clause can always reference it
     try:
         raw_text = submission.text.strip()
         if not raw_text or len(raw_text) < 5:
-            return {"filtered_text": ""}
+            return {"instructions": []}
 
-        system_prompt = """You are a strict Instruction Filter.
-        Input: A spoken sentence.
-        Task:
-        1. If the sentence contains a clear, actionable instruction (e.g., "Open the book", "Click the button"), extract ONLY that instruction.
-        2. If the sentence is conversational (e.g., "Hi", "How are you?", "Um, let me see"), return NOTHING (empty string).
-        3. Remove polite filler like "Please" if it makes the step clearer, but keep it natural.
+        system_prompt = """You are a strict Instruction Extractor.
 
-        Output: Just the filtered text or empty string. No JSON."""
+INPUT: A paragraph of naturally spoken speech. It may mix casual conversation with actionable instructions.
 
-        response = client.chat.completions.create(
+TASK:
+- Read the entire paragraph carefully.
+- Identify every distinct, actionable instruction embedded in the speech.
+- Discard ALL conversational filler: greetings ("hi", "how are you"), questions about people ("how's your job"), pleasantries, and non-actionable statements.
+- For each instruction found, clean it up: fix obvious speech-to-text errors (e.g. "deploy the vacant" → "deploy the backend"), remove filler words ("um", "uh", "also"), and write it as a clear imperative sentence.
+- Preserve specific details: names, times, deadlines, tools, platforms (e.g. "AWS EC2", "PM2", "by tomorrow 5pm").
+
+OUTPUT: Return ONLY a valid JSON array of instruction strings. No explanation, no markdown, no extra keys.
+
+EXAMPLES:
+Input: "hi how are you go to class what about your parents well how's your job going I want you to deploy the backend on aws ec2 by tomorrow 5pm also deploy the front via pm2 on same ec2 and give me link for working web application"
+Output: ["Deploy the backend on AWS EC2 by tomorrow 5pm", "Deploy the frontend via PM2 on the same EC2 instance and provide the link to the working web application"]
+
+Input: "um hey so basically click the save button and then export as PDF"
+Output: ["Click the save button", "Export as PDF"]
+
+Input: "hi how are you doing today that's great"
+Output: []"""
+
+        response = client.chat.completions.create(   # ✅ FIX 1: was openai_client
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": raw_text}
             ],
-            temperature=0,
-            max_tokens=50
+            temperature=0.1,
+            max_tokens=500,
         )
 
-        filtered = response.choices[0].message.content.strip().strip('"')
-        return {"filtered_text": filtered}
+        raw_output = response.choices[0].message.content.strip()
+        print(f"[filter-live-chunk] Input: {raw_text[:100]}")
+        print(f"[filter-live-chunk] Output: {raw_output}")
 
+        # ✅ FIX 2: No inline imports — json and re are already imported at top of main.py
+        # Strip markdown fences if GPT wraps output in ```json ... ```
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_output, flags=re.MULTILINE).strip()
+        instructions = json.loads(cleaned) if cleaned else []
+
+        # Validate it's actually a list of strings
+        if not isinstance(instructions, list):
+            instructions = []
+        instructions = [str(i).strip() for i in instructions if str(i).strip()]
+
+        return {"instructions": instructions}
+
+    except json.JSONDecodeError as e:
+        print(f"[filter-live-chunk] JSON parse error: {e} | raw: {raw_output}")
+        return {"instructions": []}
     except Exception as e:
-        print(f"Filter Error: {e}")
-        return {"filtered_text": ""}
-
+        print(f"[filter-live-chunk] Error: {str(e)}")
+        return {"instructions": []}
 
 @app.get("/jobs")
 async def get_all_jobs(db: Session = Depends(get_db)):
