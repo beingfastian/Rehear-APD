@@ -5,9 +5,8 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from dotenv import load_dotenv
 
-# load_dotenv()
-load_dotenv(override=True)
-
+# Only load .env when running locally (do NOT override env vars set by Docker)
+load_dotenv(override=False)
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -18,7 +17,6 @@ print("DATABASE_URL =", DATABASE_URL)
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
 
 
 # Models
@@ -40,7 +38,7 @@ class Instruction(Base):
     job_id = Column(String(50), index=True, nullable=False)
     instruction_index = Column(Integer, nullable=False)
     instruction_text = Column(Text, nullable=False)
-    steps = Column(JSON, nullable=False)  # Store steps as JSON array
+    steps = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

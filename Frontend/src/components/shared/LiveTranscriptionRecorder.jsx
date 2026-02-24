@@ -1,239 +1,199 @@
 // Frontend/src/components/shared/LiveTranscriptionRecorder.jsx
-// DEBUG VERSION - shows exactly where the pipeline breaks
+// OPTIMIZED: Fix #3 — Optimistic UI shows instruction instantly before API confirms
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle, Volume2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle2, Volume2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
-const CHUNK_INTERVAL_MS = 5000;
-
 const LiveTranscriptionRecorder = ({ onComplete }) => {
+  const { showNotification } = useApp();
 
+  // State
   const [isRecording, setIsRecording] = useState(false);
   const [instructionsList, setInstructionsList] = useState([]);
+  // Each item: { id, text, status: 'filtering' | 'saving' | 'saved' | 'error' | 'ignored', isPlaying: bool }
   const [currentBuffer, setCurrentBuffer] = useState('');
   const [error, setError] = useState(null);
-  const [debugLog, setDebugLog] = useState([]);
 
-  const mediaRecorderRef = useRef(null);
-  const streamRef = useRef(null);
-  const isRecordingRef = useRef(false);
-  const processFinalChunkRef = useRef(null);
+  // Refs
+  const recognitionRef = useRef(null);
   const transcriptEndRef = useRef(null);
-
-  const audioQueueRef = useRef([]);
-  const isPlayingRef = useRef(false);
   const currentAudioRef = useRef(null);
 
-  const log = (msg, type = 'info') => {
-    console.log(`[DEBUG] ${msg}`);
-    setDebugLog(prev => [...prev.slice(-20), { msg, type, time: new Date().toLocaleTimeString() }]);
-  };
+  // --- 1. Initialize Speech Recognition ---
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  // --- Audio Queue ---
-  const playNext = useCallback(() => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
-    const url = audioQueueRef.current.shift();
-    if (!url) return;
-    isPlayingRef.current = true;
-    const audio = new Audio(url);
-    currentAudioRef.current = audio;
-    audio.onended = () => { isPlayingRef.current = false; currentAudioRef.current = null; playNext(); };
-    audio.onerror = () => { isPlayingRef.current = false; currentAudioRef.current = null; playNext(); };
-    audio.play().catch(() => { isPlayingRef.current = false; playNext(); });
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+
+          if (event.results[i].isFinal) {
+            processFinalChunk(transcript);
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+        setCurrentBuffer(interimTranscript);
+      };
+
+      recognition.onerror = (event) => {
+        if (event.error !== 'no-speech') {
+          console.error('Speech API Error:', event.error);
+          if (event.error === 'not-allowed') {
+            setError('Microphone permission denied.');
+          } else {
+            setError(`Speech error: ${event.error}`);
+          }
+        }
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      setError('Your browser does not support Live Speech. Please use Chrome or Edge.');
+    }
   }, []);
 
-  const queueAudio = useCallback((url) => {
-    if (!url) return;
-    audioQueueRef.current.push(url);
-    playNext();
-  }, [playNext]);
+  // --- 2. FIX #3: Optimistic UI + Filter + Save + Play ---
+  const processFinalChunk = async (rawText) => {
+    if (!rawText || !rawText.trim()) return;
 
-  // --- Main chunk processor ---
-  const processFinalChunk = useCallback(async (audioBlob) => {
-    log(`📦 Chunk received: ${audioBlob.size} bytes, type: ${audioBlob.type}`, 'info');
-
-    if (!audioBlob || audioBlob.size < 1000) {
-      log(`⏭️ Chunk too small (${audioBlob?.size} bytes), skipping`, 'warn');
-      return;
-    }
-
-    setCurrentBuffer('transcribing...');
+    // FIX #3: Show text on screen INSTANTLY — don't wait for the API
+    // This removes the visible delay between speaking and seeing the text
+    const newId = Date.now();
+    setInstructionsList(prev => [
+      ...prev,
+      { id: newId, text: rawText.trim(), status: 'filtering', isPlaying: false }
+    ]);
+    setCurrentBuffer('');
 
     try {
-      // Step 1: Whisper transcription
-      log(`🎤 Sending to /transcribe-chunk...`, 'info');
-      const formData = new FormData();
-      formData.append('file', audioBlob, 'chunk.webm');
+      console.log('[Filter] Analyzing chunk:', rawText);
 
-      const transcribeRes = await fetch(`${API_BASE_URL}/transcribe-chunk`, {
-        method: 'POST',
-        body: formData,
-      });
+      // Step 1: Check if instruction (GPT call #1 — the only GPT call now)
+      const result = await apiService.filterLiveChunk(rawText);
 
-      log(`📡 /transcribe-chunk status: ${transcribeRes.status}`, transcribeRes.ok ? 'success' : 'error');
-
-      if (!transcribeRes.ok) {
-        const errText = await transcribeRes.text();
-        log(`❌ Transcribe failed: ${errText}`, 'error');
-        setCurrentBuffer('');
+      if (!result || !result.filtered_text) {
+        // Not an instruction — remove it from the list silently
+        console.log('[Filter] Ignored filler:', rawText);
+        setInstructionsList(prev => prev.filter(item => item.id !== newId));
         return;
       }
 
-      const transcribeData = await transcribeRes.json();
-      log(`📝 Whisper result: "${transcribeData.text || 'empty'}"`, 'info');
-      setCurrentBuffer('');
+      const instruction = result.filtered_text;
+      console.log('[Filter] Confirmed instruction:', instruction);
 
-      if (!transcribeData.text || !transcribeData.text.trim()) {
-        log(`⏭️ Empty transcription, skipping`, 'warn');
-        return;
-      }
+      // Update text to cleaned version and mark as saving
+      setInstructionsList(prev =>
+        prev.map(item =>
+          item.id === newId ? { ...item, text: instruction, status: 'saving' } : item
+        )
+      );
 
-      // Step 2: Filter
-      log(`🔍 Filtering: "${transcribeData.text.substring(0, 60)}"`, 'info');
-      const filterResult = await apiService.filterLiveChunk(transcribeData.text);
-      log(`🔍 Filter result: "${filterResult?.filtered_text || 'empty'}"`, filterResult?.filtered_text ? 'success' : 'warn');
-
-      if (!filterResult?.filtered_text?.trim()) {
-        log(`⏭️ Not an instruction, skipped`, 'warn');
-        return;
-      }
-
-      const instruction = filterResult.filtered_text.trim();
-      const instructionId = Date.now() + Math.random();
-
-      setInstructionsList(prev => [
-        ...prev,
-        { id: instructionId, text: instruction, status: 'saving', audioUrl: null }
-      ]);
-
-      // Step 3: Save + TTS
-      log(`💾 Saving: "${instruction}"`, 'info');
+      // Step 2: Save to S3 (no second GPT call — backend skips detect_instructions now)
       try {
         const saveResult = await apiService.processLiveText(instruction);
-        const audioUrl = saveResult?.instructions?.[0]?.steps?.[0]?.audio || null;
-        log(`✅ Saved! job_id: ${saveResult.job_id}, audio: ${audioUrl ? 'yes' : 'no'}`, 'success');
+        console.log('[S3] Saved! Job ID:', saveResult.job_id);
 
+        // Mark as saved
         setInstructionsList(prev =>
           prev.map(item =>
-            item.id === instructionId ? { ...item, status: 'saved', audioUrl } : item
+            item.id === newId ? { ...item, status: 'saved' } : item
           )
         );
 
+        // Step 3: Auto-play TTS audio immediately
+        const audioUrl = saveResult.instructions?.[0]?.steps?.[0]?.audio;
         if (audioUrl) {
-          log(`🔊 Queuing audio for playback`, 'success');
-          queueAudio(audioUrl);
+          playAudio(audioUrl, newId);
         }
 
         if (onComplete) onComplete(saveResult);
 
       } catch (saveErr) {
-        log(`❌ Save failed: ${saveErr.message}`, 'error');
+        console.error('[S3] Save failed:', saveErr);
         setInstructionsList(prev =>
           prev.map(item =>
-            item.id === instructionId ? { ...item, status: 'error' } : item
+            item.id === newId ? { ...item, status: 'error' } : item
           )
         );
       }
 
     } catch (err) {
-      log(`❌ Pipeline error: ${err.message}`, 'error');
-      setCurrentBuffer('');
+      console.error('[Filter] Failed:', err);
+      // Remove the optimistic entry on total failure
+      setInstructionsList(prev => prev.filter(item => item.id !== newId));
     }
-  }, [onComplete, queueAudio]);
+  };
 
-  useEffect(() => {
-    processFinalChunkRef.current = processFinalChunk;
-  }, [processFinalChunk]);
+  // --- 3. Play Audio ---
+  const playAudio = (audioUrl, instructionId) => {
+    // Stop any currently playing audio first
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
 
-  // --- Start Recording ---
-  const startRecording = async () => {
+    const audio = new Audio(audioUrl);
+    currentAudioRef.current = audio;
+
+    setInstructionsList(prev =>
+      prev.map(item =>
+        item.id === instructionId ? { ...item, isPlaying: true } : item
+      )
+    );
+
+    audio.play().catch(err => {
+      console.error('[Audio] Playback failed:', err);
+    });
+
+    audio.onended = () => {
+      setInstructionsList(prev =>
+        prev.map(item =>
+          item.id === instructionId ? { ...item, isPlaying: false } : item
+        )
+      );
+      currentAudioRef.current = null;
+    };
+  };
+
+  // --- 4. Recording Controls ---
+  const startRecording = () => {
     setError(null);
     setInstructionsList([]);
     setCurrentBuffer('');
-    setDebugLog([]);
-    audioQueueRef.current = [];
 
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
-      isPlayingRef.current = false;
     }
 
-    try {
-      log('🎙️ Requesting mic access...', 'info');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        }
-      });
-
-      streamRef.current = stream;
-      log('✅ Mic access granted', 'success');
-
-      // Detect supported mime type
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/ogg')
-        ? 'audio/ogg'
-        : '';
-
-      log(`🎞️ Using mimeType: ${mimeType || 'browser default'}`, 'info');
-
-      const options = mimeType ? { mimeType } : {};
-      const mediaRecorder = new MediaRecorder(stream, options);
-      mediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (e) => {
-        log(`📦 ondataavailable fired: ${e.data?.size || 0} bytes`, 'info');
-        if (e.data && e.data.size > 1000 && isRecordingRef.current) {
-          processFinalChunkRef.current?.(e.data);
-        } else {
-          log(`⏭️ Skipped chunk: size=${e.data?.size}, recording=${isRecordingRef.current}`, 'warn');
-        }
-      };
-
-      mediaRecorder.onstart = () => log('▶️ MediaRecorder started', 'success');
-      mediaRecorder.onstop = () => log('⏹️ MediaRecorder stopped', 'warn');
-      mediaRecorder.onerror = (e) => log(`❌ MediaRecorder error: ${e.error}`, 'error');
-
-      mediaRecorder.start(CHUNK_INTERVAL_MS);
-      log(`⏱️ Recording, chunk every ${CHUNK_INTERVAL_MS / 1000}s`, 'info');
-
-      isRecordingRef.current = true;
-      setIsRecording(true);
-
-    } catch (err) {
-      log(`❌ Mic failed: ${err.name} - ${err.message}`, 'error');
-      if (err.name === 'NotAllowedError') {
-        setError('Microphone permission denied. Please allow mic access.');
-      } else {
-        setError('Could not start recording: ' + err.message);
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error('Mic start error', err);
       }
     }
   };
 
   const stopRecording = () => {
-    log('⏹️ Stop pressed', 'warn');
-    isRecordingRef.current = false;
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-
     setIsRecording(false);
     setCurrentBuffer('');
+    // Nothing to save — every instruction was already saved as it was spoken
   };
 
   const handleDiscard = () => {
@@ -241,34 +201,19 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
-      isPlayingRef.current = false;
     }
-    audioQueueRef.current = [];
     setInstructionsList([]);
     setCurrentBuffer('');
     setError(null);
-    setDebugLog([]);
   };
 
+  // Auto-scroll
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [instructionsList, currentBuffer]);
 
-  useEffect(() => {
-    return () => {
-      isRecordingRef.current = false;
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      }
-    };
-  }, []);
-
+  const savingCount = instructionsList.filter(i => i.status === 'saving' || i.status === 'filtering').length;
   const savedCount = instructionsList.filter(i => i.status === 'saved').length;
-  const savingCount = instructionsList.filter(i => i.status === 'saving').length;
-  const errorCount = instructionsList.filter(i => i.status === 'error').length;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -281,22 +226,27 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
             Smart Instruction Filter
           </h2>
           <p className="text-xs text-gray-500">
-            Powered by Whisper — accurate transcription every {CHUNK_INTERVAL_MS / 1000}s.
+            Instructions appear instantly, saved to S3, and played automatically.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          {instructionsList.length > 0 && (
-            <div className="text-xs text-right">
-              {savedCount > 0 && <div className="text-green-600 font-medium">✅ {savedCount} saved</div>}
-              {savingCount > 0 && <div className="text-blue-500 animate-pulse">💾 {savingCount} saving...</div>}
-              {errorCount > 0 && <div className="text-red-500">❌ {errorCount} failed</div>}
+          {savedCount > 0 && (
+            <div className="flex items-center gap-1 px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-bold">
+              <CheckCircle2 className="w-3 h-3" />
+              {savedCount} saved
+            </div>
+          )}
+          {savingCount > 0 && (
+            <div className="flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-bold animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Processing...
             </div>
           )}
           {isRecording && (
             <div className="flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full text-xs font-bold animate-pulse">
               <span className="w-2 h-2 bg-red-600 rounded-full"></span>
-              RECORDING
+              LISTENING
             </div>
           )}
         </div>
@@ -305,60 +255,87 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
       {/* Error */}
       {error && (
         <div className="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center gap-3">
-          <AlertCircle className="text-red-600 w-5 h-5 flex-shrink-0" />
+          <AlertCircle className="text-red-600 w-5 h-5" />
           <span className="text-red-700 text-sm">{error}</span>
         </div>
       )}
 
-      {/* Debug Panel */}
-      {debugLog.length > 0 && (
-        <div className="bg-gray-900 text-xs font-mono rounded-lg p-3 max-h-48 overflow-y-auto space-y-1">
-          <div className="text-gray-400 mb-1 font-bold">DEBUG LOG</div>
-          {debugLog.map((entry, i) => (
-            <div key={i} className={
-              entry.type === 'error' ? 'text-red-400' :
-              entry.type === 'success' ? 'text-green-400' :
-              entry.type === 'warn' ? 'text-yellow-400' :
-              'text-gray-300'
-            }>
-              [{entry.time}] {entry.msg}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Transcription Box */}
-      <div className="bg-white border border-gray-200 rounded-lg h-80 flex flex-col p-6 overflow-y-auto shadow-inner">
+      <div className="bg-white border border-gray-200 rounded-lg h-96 flex flex-col p-6 overflow-y-auto shadow-inner relative">
 
+        {/* Empty state */}
         {instructionsList.length === 0 && !currentBuffer && (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-300 select-none">
             <Mic className="w-16 h-16 mb-4 opacity-20" />
             <p className="text-xl font-medium">Ready to start.</p>
-            <p className="text-sm mt-2">Speak naturally — results appear every {CHUNK_INTERVAL_MS / 1000} seconds.</p>
+            <p className="text-sm mt-2">
+              "Hi! <span className="text-blue-400 font-bold">Go to class.</span> How are you?"
+            </p>
+            <p className="text-xs mt-1 text-gray-400">
+              "Go to class" → appears instantly → saved → plays 🔊
+            </p>
           </div>
         )}
 
-        <div className="space-y-4">
-          {instructionsList.map((item, idx) => (
-            <div key={item.id} className="flex items-start gap-3">
-              <div className="min-w-[28px] h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">
+        <div className="space-y-3">
+
+          {instructionsList.map((inst, idx) => (
+            <div
+              key={inst.id}
+              className={`flex items-start gap-3 rounded-lg p-2 transition-all duration-300 ${
+                inst.isPlaying ? 'bg-blue-50' : ''
+              } ${inst.status === 'filtering' ? 'opacity-60' : 'opacity-100'}`}
+            >
+              {/* Index badge */}
+              <div className="min-w-[28px] h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5 shadow-sm flex-shrink-0">
                 {idx + 1}
               </div>
-              <p className="text-lg text-gray-800 font-medium leading-relaxed flex-1 border-b border-gray-50 pb-2">
-                {item.text}
+
+              {/* Instruction text */}
+              <p className="text-lg text-gray-800 font-medium leading-relaxed flex-1 border-b border-gray-100 pb-2">
+                {inst.text}
               </p>
-              <div className="mt-1 flex-shrink-0 flex items-center gap-1">
-                {item.status === 'saving' && <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />}
-                {item.status === 'saved' && <><CheckCircle className="w-4 h-4 text-green-500" /><Volume2 className="w-4 h-4 text-blue-400" /></>}
-                {item.status === 'error' && <AlertCircle className="w-4 h-4 text-red-400" />}
+
+              {/* Per-instruction status */}
+              <div className="flex-shrink-0 mt-1 min-w-[90px] text-right">
+                {inst.status === 'filtering' && (
+                  <span className="flex items-center justify-end gap-1 text-xs text-gray-400 animate-pulse">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Checking...
+                  </span>
+                )}
+                {inst.status === 'saving' && (
+                  <span className="flex items-center justify-end gap-1 text-xs text-blue-500 animate-pulse">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Saving...
+                  </span>
+                )}
+                {inst.status === 'saved' && inst.isPlaying && (
+                  <span className="flex items-center justify-end gap-1 text-xs text-blue-600 font-medium animate-pulse">
+                    <Volume2 className="w-3 h-3" /> Playing...
+                  </span>
+                )}
+                {inst.status === 'saved' && !inst.isPlaying && (
+                  <span className="flex items-center justify-end gap-1 text-xs text-green-600">
+                    <CheckCircle2 className="w-3 h-3" /> Saved
+                  </span>
+                )}
+                {inst.status === 'error' && (
+                  <span className="flex items-center justify-end gap-1 text-xs text-red-500">
+                    <AlertCircle className="w-3 h-3" /> Failed
+                  </span>
+                )}
               </div>
             </div>
           ))}
 
+          {/* Ghost buffer */}
           {currentBuffer && (
-            <div className="flex items-center gap-3 opacity-50">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-              <p className="text-sm text-gray-400 italic">{currentBuffer}</p>
+            <div className="flex items-start gap-3 opacity-40">
+              <div className="min-w-[28px] h-7 flex items-center justify-center">
+                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+              </div>
+              <p className="text-lg text-gray-400 italic leading-relaxed">
+                {currentBuffer}...
+              </p>
             </div>
           )}
         </div>
@@ -366,30 +343,44 @@ const LiveTranscriptionRecorder = ({ onComplete }) => {
         <div ref={transcriptEndRef} />
       </div>
 
-      {/* Controls */}
+      {/* Controls — no SAVE button */}
       <div className="flex justify-center gap-4 py-4">
+
         {!isRecording && (
-          <button onClick={startRecording}
-            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg flex items-center gap-2">
+          <button
+            onClick={startRecording}
+            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2"
+          >
             <Mic className="w-6 h-6" />
             {instructionsList.length > 0 ? 'RESUME' : 'START'}
           </button>
         )}
 
         {isRecording && (
-          <button onClick={stopRecording}
-            className="px-8 py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-full font-bold shadow-lg flex items-center gap-2">
+          <button
+            onClick={stopRecording}
+            className="px-8 py-4 bg-gray-800 hover:bg-gray-900 text-white rounded-full font-bold shadow-lg flex items-center gap-2"
+          >
             <Square className="w-5 h-5" /> STOP
           </button>
         )}
 
         {!isRecording && instructionsList.length > 0 && (
-          <button onClick={handleDiscard}
-            className="px-6 py-4 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-full font-bold shadow-sm flex items-center gap-2">
+          <button
+            onClick={handleDiscard}
+            className="px-6 py-4 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-full font-bold shadow-sm flex items-center gap-2"
+          >
             <Trash2 className="w-5 h-5" /> DISCARD
           </button>
         )}
       </div>
+
+      {/* Footer summary */}
+      {!isRecording && savedCount > 0 && (
+        <p className="text-center text-sm text-green-600 font-medium">
+          ✅ {savedCount} instruction{savedCount !== 1 ? 's' : ''} saved to S3 and played.
+        </p>
+      )}
 
     </div>
   );

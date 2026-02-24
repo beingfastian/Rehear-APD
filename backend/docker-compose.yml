@@ -7,7 +7,7 @@ services:
     container_name: audio_postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: "1234"
       POSTGRES_DB: audio_instructions
     ports:
       - "5432:5432"
@@ -43,7 +43,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/audio_instructions
+      - DATABASE_URL=postgresql+psycopg://postgres:1234@postgres:5432/audio_instructions
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -53,7 +55,7 @@ services:
       - .:/app
     command: uvicorn main:app --host 0.0.0.0 --port 10000 --reload
 
-  # Celery Worker (Optional - for async processing)
+  # Celery Worker
   worker:
     build: .
     container_name: audio_worker
@@ -64,7 +66,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/audio_instructions
+      - DATABASE_URL=postgresql+psycopg://postgres:1234@postgres:5432/audio_instructions
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
