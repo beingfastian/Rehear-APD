@@ -159,7 +159,7 @@ const Dashboard = ({ setCurrentPage }) => {
           <FileUpload onSuccess={handleUploadSuccess} />
         </div>
       </div>
-
+      
       {/* Recent Activity with Real Data from Database */}
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex items-center justify-between">
