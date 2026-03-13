@@ -1,13 +1,19 @@
 // Frontend/src/components/shared/LiveTranscriptionRecorder.jsx
-// NEW: onSessionComplete prop — after STOP + all saves finish, builds a combined job
-//      and calls onSessionComplete(sessionJob) so the parent can navigate to SegmentWorkspace
+// FIXED:
+//  Bug 1 — SILENCE_DEBOUNCE_MS raised from 2500 → 4000ms
+//  Bug 2 — isFlushingRef lock prevents concurrent flushes
+//  Bug 3 — recognition.onend auto-restarts mic if still recording
+//  Bug 4 — enqueueAudio removed from saveInstruction (no auto-play during recording)
+//  Bug 5 — flushPendingBufferRef keeps recognition.onresult closure fresh
+//  Bug 6 — checkSessionComplete guards against firing before any saves have started
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle2, Volume2, ArrowRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
 
-const SILENCE_DEBOUNCE_MS = 2500;
+// FIX 1 — raised from 2500 to 4000 so natural mid-thought pauses don't cut early
+const SILENCE_DEBOUNCE_MS = 4000;
 
 const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const { showNotification } = useApp();
@@ -17,77 +23,101 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const [currentBuffer, setCurrentBuffer] = useState('');
   const [pendingText, setPendingText] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
-  const [isSessionComplete, setIsSessionComplete] = useState(false); // show "Open Workspace" button
+  const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [error, setError] = useState(null);
 
-  const recognitionRef = useRef(null);
-  const transcriptEndRef = useRef(null);
-  const silenceTimerRef = useRef(null);
-  const pendingTextRef = useRef('');
+  const recognitionRef       = useRef(null);
+  const transcriptEndRef     = useRef(null);
+  const silenceTimerRef      = useRef(null);
+  const pendingTextRef       = useRef('');
+
+  // FIX 2 — lock so only one flush runs at a time
+  const isFlushingRef        = useRef(false);
+  // FIX 3 — track whether the mic should be live so onend can restart
+  const isRecordingRef       = useRef(false);
+  // FIX 5 — always-current ref to flushPendingBuffer for the recognition closure
+  const flushPendingBufferRef = useRef(null);
 
   // ─── Audio queue refs ──────────────────────────────────────────────────────
-  const audioQueueRef = useRef([]);
-  const isPlayingRef = useRef(false);
-  const currentAudioRef = useRef(null);
+  const audioQueueRef    = useRef([]);
+  const isPlayingRef     = useRef(false);
+  const currentAudioRef  = useRef(null);
   const audioUnlockedRef = useRef(false);
 
   // ─── Session tracking refs ─────────────────────────────────────────────────
-  // Accumulates saved instruction objects { text, audioUrl } as they complete
   const sessionInstructionsRef = useRef([]);
-  // Counts saves currently in-flight
-  const pendingSavesRef = useRef(0);
-  // Set to true when STOP is clicked — triggers navigation once saves drain to 0
-  const stopRequestedRef = useRef(false);
+  const pendingSavesRef        = useRef(0);
+  const stopRequestedRef       = useRef(false);
+  // FIX 6 — track whether at least one save has been kicked off
+  const saveEverStartedRef     = useRef(false);
 
   // ─── 1. INIT SPEECH RECOGNITION ───────────────────────────────────────────
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event) => {
-        let interimTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            const updated = (pendingTextRef.current + ' ' + transcript).trim();
-            pendingTextRef.current = updated;
-            setPendingText(updated);
-            setCurrentBuffer('');
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(flushPendingBuffer, SILENCE_DEBOUNCE_MS);
-          } else {
-            interimTranscript += transcript;
-          }
-        }
-        setCurrentBuffer(interimTranscript);
-      };
-
-      recognition.onerror = (event) => {
-        if (event.error !== 'no-speech') {
-          if (event.error === 'not-allowed') setError('Microphone permission denied.');
-          else setError(`Speech error: ${event.error}`);
-        }
-      };
-
-      recognitionRef.current = recognition;
-    } else {
+    if (!SpeechRecognition) {
       setError('Your browser does not support Live Speech. Please use Chrome or Edge.');
+      return;
     }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous     = true;
+    recognition.interimResults = true;
+    recognition.lang           = 'en-US';
+
+    recognition.onresult = (event) => {
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          const updated = (pendingTextRef.current + ' ' + transcript).trim();
+          pendingTextRef.current = updated;
+          setPendingText(updated);
+          setCurrentBuffer('');
+          clearTimeout(silenceTimerRef.current);
+          // FIX 5 — call via ref so closure always has the latest function
+          silenceTimerRef.current = setTimeout(
+            () => flushPendingBufferRef.current?.(),
+            SILENCE_DEBOUNCE_MS
+          );
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      setCurrentBuffer(interimTranscript);
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed') {
+        setError('Microphone permission denied.');
+      } else if (event.error !== 'no-speech') {
+        console.warn('[Recognition] error:', event.error);
+      }
+    };
+
+    // FIX 3 — if still recording when Chrome kills the session, restart immediately
+    recognition.onend = () => {
+      if (isRecordingRef.current) {
+        console.log('[Recognition] onend fired while still recording — restarting mic');
+        try {
+          recognition.start();
+        } catch (err) {
+          console.error('[Recognition] restart failed:', err);
+        }
+      }
+    };
+
+    recognitionRef.current = recognition;
     return () => clearTimeout(silenceTimerRef.current);
   }, []);
 
   // ─── 2. SESSION COMPLETE CHECK ─────────────────────────────────────────────
-  // Called after every save completes. If STOP was pressed and no saves are
-  // in-flight, the session is done — build the job and notify the parent.
   const checkSessionComplete = useCallback(() => {
     if (
       stopRequestedRef.current &&
       pendingSavesRef.current === 0 &&
       !isExtracting &&
+      // FIX 6 — only complete if saves were actually started (not just isRecording=false)
+      saveEverStartedRef.current &&
       sessionInstructionsRef.current.length > 0
     ) {
       const sessionJob = {
@@ -97,7 +127,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
         duration: '00:00',
         status: 'Completed',
         transcription: sessionInstructionsRef.current.map(i => i.text).join('. '),
-        fromLive: true, // ← tells SegmentWorkspace to auto-play on mount
+        fromLive: true,
         instructions: sessionInstructionsRef.current.map(inst => ({
           instruction: inst.text,
           steps: [{ text: inst.text, audio: inst.audioUrl }],
@@ -109,12 +139,11 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     }
   }, [isExtracting, onSessionComplete]);
 
-  // Re-check after isExtracting flips to false (flush just finished)
   useEffect(() => {
     if (!isExtracting) checkSessionComplete();
   }, [isExtracting, checkSessionComplete]);
 
-  // ─── 3. AUDIO QUEUE ───────────────────────────────────────────────────────
+  // ─── 3. AUDIO QUEUE (kept for the per-item replay button only) ─────────────
   const processAudioQueue = useCallback(() => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
 
@@ -132,7 +161,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       .then(() => console.log('[Audio] Playing'))
       .catch(err => {
         console.error('[Audio] Blocked:', err);
-        isPlayingRef.current = false;
+        isPlayingRef.current   = false;
         currentAudioRef.current = null;
         setInstructionsList(prev =>
           prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
@@ -141,7 +170,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       });
 
     audio.onended = () => {
-      isPlayingRef.current = false;
+      isPlayingRef.current   = false;
       currentAudioRef.current = null;
       setInstructionsList(prev =>
         prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
@@ -160,22 +189,30 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-    isPlayingRef.current = false;
-    audioQueueRef.current = [];
+    isPlayingRef.current      = false;
+    audioQueueRef.current     = [];
     enqueueAudio(url, itemId);
   }, [enqueueAudio]);
 
   // ─── 4. FLUSH BUFFER → GPT EXTRACTION ─────────────────────────────────────
   const flushPendingBuffer = useCallback(async () => {
+    // FIX 2 — bail if a flush is already running; the queued text stays in
+    // pendingTextRef and will be picked up by the next silence timer or by stopRecording
+    if (isFlushingRef.current) {
+      console.log('[Flush] Already flushing — skipping concurrent call');
+      return;
+    }
+
     const text = pendingTextRef.current.trim();
     if (!text || text.length < 5) return;
 
+    isFlushingRef.current  = true;
     pendingTextRef.current = '';
     setPendingText('');
     setIsExtracting(true);
 
     try {
-      const result = await apiService.filterLiveChunk(text);
+      const result       = await apiService.filterLiveChunk(text);
       const instructions = result?.instructions || [];
 
       if (instructions.length === 0) return;
@@ -190,17 +227,24 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
 
       setInstructionsList(prev => [...prev, ...newItems]);
 
-      // Sequential save so audio plays in correct order
-      for (const item of newItems) {
-        await saveInstruction(item.id, item.text);
-      }
+      // FIX 6 — mark that at least one save cycle has started
+      saveEverStartedRef.current = true;
+
+      // Run saves in parallel — order in the UI is preserved by item ids
+      await Promise.all(newItems.map(item => saveInstruction(item.id, item.text)));
 
     } catch (err) {
       console.error('[Flush] Failed:', err);
     } finally {
       setIsExtracting(false);
+      isFlushingRef.current = false;
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // FIX 5 — keep the ref current so the recognition closure always calls latest
+  useEffect(() => {
+    flushPendingBufferRef.current = flushPendingBuffer;
+  }, [flushPendingBuffer]);
 
   // ─── 5. SAVE SINGLE INSTRUCTION ───────────────────────────────────────────
   const saveInstruction = async (itemId, instructionText) => {
@@ -208,20 +252,20 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
 
     try {
       const saveResult = await apiService.processLiveText(instructionText);
-      const audioUrl = saveResult.instructions?.[0]?.steps?.[0]?.audio || null;
+      const audioUrl   = saveResult.instructions?.[0]?.steps?.[0]?.audio || null;
 
       setInstructionsList(prev =>
         prev.map(item =>
-          item.id === itemId
-            ? { ...item, status: 'saved', audioUrl }
-            : item
+          item.id === itemId ? { ...item, status: 'saved', audioUrl } : item
         )
       );
 
       // Accumulate into session
       sessionInstructionsRef.current.push({ text: instructionText, audioUrl });
 
-      if (audioUrl) enqueueAudio(audioUrl, itemId);
+      // FIX 4 — DO NOT call enqueueAudio here.
+      // Audio must NOT play out loud while the teacher is still recording.
+      // Playback is only triggered by the Play button in SegmentWorkspace.
 
       if (onComplete) onComplete(saveResult);
 
@@ -254,12 +298,14 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     setInstructionsList([]);
     setCurrentBuffer('');
     setPendingText('');
-    pendingTextRef.current = '';
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
+    pendingTextRef.current       = '';
+    audioQueueRef.current        = [];
+    isPlayingRef.current         = false;
+    isFlushingRef.current        = false;   // FIX 2 — reset lock on new session
+    saveEverStartedRef.current   = false;   // FIX 6 — reset guard
     sessionInstructionsRef.current = [];
-    pendingSavesRef.current = 0;
-    stopRequestedRef.current = false;
+    pendingSavesRef.current      = 0;
+    stopRequestedRef.current     = false;
     clearTimeout(silenceTimerRef.current);
 
     if (currentAudioRef.current) {
@@ -269,24 +315,26 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
 
     if (recognitionRef.current) {
       try {
+        isRecordingRef.current = true;  // FIX 3 — set before start so onend knows
         recognitionRef.current.start();
         setIsRecording(true);
       } catch (err) {
         console.error('Mic start error', err);
+        isRecordingRef.current = false;
       }
     }
   };
 
   const stopRecording = () => {
+    isRecordingRef.current = false;     // FIX 3 — prevent onend from restarting
     if (recognitionRef.current) recognitionRef.current.stop();
     clearTimeout(silenceTimerRef.current);
     setIsRecording(false);
     setCurrentBuffer('');
 
-    // Mark that stop was requested — checkSessionComplete will fire when saves drain
     stopRequestedRef.current = true;
 
-    // Flush any remaining buffered speech, then check
+    // Flush any speech that was buffered when Stop was pressed, then check complete
     if (pendingTextRef.current.trim()) {
       flushPendingBuffer().then(() => checkSessionComplete());
     } else {
@@ -295,18 +343,21 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   };
 
   const handleDiscard = () => {
+    isRecordingRef.current = false;     // FIX 3 — prevent restart on discard
     if (recognitionRef.current) recognitionRef.current.stop();
     clearTimeout(silenceTimerRef.current);
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-    pendingTextRef.current = '';
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
+    pendingTextRef.current         = '';
+    audioQueueRef.current          = [];
+    isPlayingRef.current           = false;
+    isFlushingRef.current          = false;
+    saveEverStartedRef.current     = false;
     sessionInstructionsRef.current = [];
-    pendingSavesRef.current = 0;
-    stopRequestedRef.current = false;
+    pendingSavesRef.current        = 0;
+    stopRequestedRef.current       = false;
     setInstructionsList([]);
     setCurrentBuffer('');
     setPendingText('');
@@ -320,7 +371,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [instructionsList, currentBuffer, pendingText]);
 
-  const savedCount = instructionsList.filter(i => i.status === 'saved').length;
+  const savedCount  = instructionsList.filter(i => i.status === 'saved').length;
   const stillSaving = instructionsList.some(i => i.status === 'saving') || isExtracting;
 
   return (
@@ -334,18 +385,18 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
             Smart Instruction Filter
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Speak naturally — instructions appear after each pause, played in order.
+            Speak naturally — instructions are captured after each {SILENCE_DEBOUNCE_MS / 1000}s pause.
           </p>
         </div>
         <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
-          isRecording ? 'bg-red-100 text-red-700 animate-pulse'
+          isRecording              ? 'bg-red-100 text-red-700 animate-pulse'
           : isExtracting || stillSaving ? 'bg-yellow-100 text-yellow-700'
-          : isSessionComplete ? 'bg-green-100 text-green-700'
+          : isSessionComplete      ? 'bg-green-100 text-green-700'
           : 'bg-gray-100 text-gray-500'
         }`}>
-          {isRecording ? '● RECORDING'
-           : isExtracting ? '⟳ EXTRACTING...'
-           : stillSaving ? '⟳ SAVING...'
+          {isRecording    ? '● RECORDING'
+           : isExtracting  ? '⟳ EXTRACTING...'
+           : stillSaving   ? '⟳ SAVING...'
            : isSessionComplete ? '✓ DONE'
            : '○ IDLE'}
         </div>
@@ -389,8 +440,8 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
               )}
             </div>
             <p className={`flex-1 text-base leading-relaxed ${
-              item.status === 'saved' ? 'text-gray-800' :
-              item.status === 'error' ? 'text-red-600' : 'text-gray-500'
+              item.status === 'saved'  ? 'text-gray-800' :
+              item.status === 'error'  ? 'text-red-600'  : 'text-gray-500'
             }`}>{item.text}</p>
             {item.status === 'saved' && item.audioUrl && (
               <button
@@ -411,7 +462,9 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
             </div>
             <p className="text-base text-orange-700 italic">
               {pendingText}
-              <span className="text-xs text-orange-400 ml-2">(processing in {SILENCE_DEBOUNCE_MS / 1000}s...)</span>
+              <span className="text-xs text-orange-400 ml-2">
+                (processing in {SILENCE_DEBOUNCE_MS / 1000}s...)
+              </span>
             </p>
           </div>
         )}
