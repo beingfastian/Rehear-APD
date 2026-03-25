@@ -239,7 +239,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       setIsExtracting(false);
       isFlushingRef.current = false;
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line
 
   // FIX 5 — keep the ref current so the recognition closure always calls latest
   useEffect(() => {
