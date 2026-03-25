@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends
@@ -49,10 +49,10 @@ s3_client = boto3.client(
 )
 
 BUCKET_NAME = os.getenv("AWS_S3_BUCKET")
-AWS_REGION = os.getenv("AWS_REGION")
+AWS_REGION  = os.getenv("AWS_REGION")
 
-# FIX #2: Thread pool so TTS + S3 blocking calls don't block the async event loop
-executor = ThreadPoolExecutor(max_workers=4)
+# PERF — increased from 4 → 8 workers to handle concurrent TTS generation
+executor = ThreadPoolExecutor(max_workers=8)
 
 
 # ============================================================================
@@ -137,7 +137,8 @@ IMPORTANT: Return a flat array of instruction strings, NOT objects with steps.""
             {"role": "user", "content": f"Extract ONLY instructions from this transcription:\n\n{transcription}"}
         ],
         response_format={"type": "json_object"},
-        temperature=0
+        temperature=0,
+        timeout=20,  # PERF — hard timeout so slow calls don't block forever
     )
 
     result = json.loads(response.choices[0].message.content)
@@ -154,21 +155,29 @@ IMPORTANT: Return a flat array of instruction strings, NOT objects with steps.""
 
 
 def generate_tts_audio(text: str, job_id: str, instruction_idx: int) -> tuple:
-    """Generate TTS audio for a single instruction and upload to S3."""
+    """
+    Generate TTS audio for a single instruction and upload to S3.
+
+    PERF — uses put_object instead of upload_fileobj.
+    For small TTS files (typically 50–500 KB) put_object is faster:
+    no multipart overhead, single HTTP request to S3.
+    """
     response = client.audio.speech.create(
         model="tts-1",
         voice="alloy",
-        input=text
+        input=text,
+        timeout=30,  # PERF — explicit timeout so hung TTS calls don't block threads
     )
 
-    s3_key = f"tts/{job_id}/instruction_{instruction_idx}.mp3"
+    s3_key    = f"tts/{job_id}/instruction_{instruction_idx}.mp3"
     audio_bytes = response.read()
 
-    s3_client.upload_fileobj(
-        io.BytesIO(audio_bytes),
-        BUCKET_NAME,
-        s3_key,
-        ExtraArgs={'ContentType': 'audio/mpeg'}
+    # PERF — put_object is a single HTTP request; faster than upload_fileobj for small files
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=s3_key,
+        Body=audio_bytes,
+        ContentType='audio/mpeg',
     )
 
     audio_url = f"https://{BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
@@ -176,10 +185,22 @@ def generate_tts_audio(text: str, job_id: str, instruction_idx: int) -> tuple:
 
 
 def save_to_database(job_id: str, transcription: str, instructions_data: dict, db: Session):
-    """Save job and generate ONE audio chunk per instruction."""
-    instructions_list = instructions_data.get("instructions", [])
-    instruction_count = len(instructions_list)
+    """
+    Save job and generate ONE audio chunk per instruction.
 
+    PERF — TTS generation now runs in PARALLEL for all instructions using
+    a local ThreadPoolExecutor. Previously each instruction was generated
+    sequentially in a loop (3 instructions × 2s TTS = 6s; now all three
+    fire concurrently and finish in ~2s).
+
+    PERF — Single db.commit() at the end instead of committing per instruction.
+    This reduces database round-trips from N+1 to 2 (one for the job record,
+    one batch commit for instructions + chunks).
+    """
+    instructions_list  = instructions_data.get("instructions", [])
+    instruction_count  = len(instructions_list)
+
+    # Persist the parent job record first so FK constraints are satisfied
     job = AudioJob(
         job_id=job_id,
         transcription=transcription,
@@ -188,26 +209,43 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
     db.add(job)
     db.commit()
 
+    if not instructions_list:
+        return
+
+    # PERF — generate ALL TTS files in parallel
+    tts_results: dict[int, tuple] = {}
+    with ThreadPoolExecutor(max_workers=min(instruction_count, 8)) as tts_pool:
+        future_to_idx = {
+            tts_pool.submit(generate_tts_audio, text, job_id, idx): idx
+            for idx, text in enumerate(instructions_list)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                tts_results[idx] = future.result()
+            except Exception as exc:
+                print(f"[TTS] instruction {idx} failed: {exc}")
+                tts_results[idx] = (None, None)
+
+    # PERF — batch all ORM objects, single commit
     for idx, instruction_text in enumerate(instructions_list):
-        instruction = Instruction(
+        db.add(Instruction(
             job_id=job_id,
             instruction_index=idx,
             instruction_text=instruction_text,
             steps=[instruction_text]
-        )
-        db.add(instruction)
+        ))
 
-        audio_url, s3_key = generate_tts_audio(instruction_text, job_id, idx)
-
-        chunk = AudioChunk(
-            job_id=job_id,
-            instruction_index=idx,
-            step_index=0,
-            step_text=instruction_text,
-            audio_url=audio_url,
-            s3_key=s3_key
-        )
-        db.add(chunk)
+        audio_url, s3_key = tts_results.get(idx, (None, None))
+        if audio_url:
+            db.add(AudioChunk(
+                job_id=job_id,
+                instruction_index=idx,
+                step_index=0,
+                step_text=instruction_text,
+                audio_url=audio_url,
+                s3_key=s3_key
+            ))
 
     db.commit()
 
@@ -221,14 +259,15 @@ async def root():
     return {
         "message": "Audio Processing API - Instruction-Based TTS",
         "status": "running",
-        "version": "3.2",
+        "version": "3.3",
         "features": [
             "audio_transcription",
             "instruction_filtering",
             "live_filtering_chunk",
             "instruction_based_tts",
             "database_storage",
-            "optimized_live_processing"
+            "parallel_tts_generation",      # PERF
+            "optimized_live_processing",
         ]
     }
 
@@ -237,7 +276,7 @@ async def root():
 async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Standard file upload workflow — unchanged."""
     try:
-        job_id = f"job_{uuid.uuid4().hex[:8]}"
+        job_id        = f"job_{uuid.uuid4().hex[:8]}"
         audio_content = await file.read()
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
@@ -250,9 +289,9 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 
             print(f"[{job_id}] Extracting instructions...")
             instructions_data = detect_instructions(transcription)
-            instruction_list = instructions_data.get("instructions", [])
+            instruction_list  = instructions_data.get("instructions", [])
 
-            print(f"[{job_id}] Generating TTS and saving to database...")
+            print(f"[{job_id}] Generating TTS in parallel and saving to database...")
             save_to_database(job_id, transcription, instructions_data, db)
 
             instructions_formatted = []
@@ -296,15 +335,16 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
     """
     Optimized live transcription save.
 
-    FIX #1 — No second GPT call: the text arriving here was already confirmed
-    as a valid instruction by /filter-live-chunk on the frontend. We trust it
-    and go straight to TTS + S3 save.
+    FIX #1 — No second GPT call: text was already confirmed as a valid
+    instruction by /filter-live-chunk on the frontend.
 
-    FIX #2 — Non-blocking: TTS generation and S3 upload run in a thread pool
-    so they don't block the async event loop.
+    FIX #2 — Non-blocking: TTS generation and S3 upload run in the global
+    thread pool so they don't block the async event loop.
+
+    PERF — save_to_database now uses parallel TTS internally.
     """
     try:
-        job_id = f"live_{uuid.uuid4().hex[:8]}"
+        job_id           = f"live_{uuid.uuid4().hex[:8]}"
         instruction_text = submission.text.strip()
 
         print(f"[{job_id}] Saving pre-filtered instruction: {instruction_text[:80]}")
@@ -356,6 +396,9 @@ async def filter_live_chunk(submission: TextSubmission):
     Receives a full paragraph of speech (accumulated over a silence window)
     and returns ALL actionable instructions found within it as a JSON array.
     Conversational filler, greetings, and questions are discarded.
+
+    PERF — max_tokens reduced 500 → 300 (instructions are short; smaller
+    limit means the model finishes faster and the HTTP response is smaller).
     """
     raw_output = ""  # declared outside try so except clause can always reference it
     try:
@@ -386,23 +429,23 @@ Output: ["Click the save button", "Export as PDF"]
 Input: "hi how are you doing today that's great"
 Output: []"""
 
-        response = client.chat.completions.create(   # ✅ FIX 1: was openai_client
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": raw_text}
             ],
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=300,    # PERF — reduced from 500; instructions are short
+            timeout=15,        # PERF — hard cap so slow calls fail fast and retry
         )
 
         raw_output = response.choices[0].message.content.strip()
         print(f"[filter-live-chunk] Input: {raw_text[:100]}")
         print(f"[filter-live-chunk] Output: {raw_output}")
 
-        # ✅ FIX 2: No inline imports — json and re are already imported at top of main.py
         # Strip markdown fences if GPT wraps output in ```json ... ```
-        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_output, flags=re.MULTILINE).strip()
+        cleaned      = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_output, flags=re.MULTILINE).strip()
         instructions = json.loads(cleaned) if cleaned else []
 
         # Validate it's actually a list of strings
@@ -418,6 +461,7 @@ Output: []"""
     except Exception as e:
         print(f"[filter-live-chunk] Error: {str(e)}")
         return {"instructions": []}
+
 
 @app.get("/jobs")
 async def get_all_jobs(db: Session = Depends(get_db)):

@@ -1,19 +1,28 @@
 // Frontend/src/components/shared/LiveTranscriptionRecorder.jsx
-// FIXED:
-//  Bug 1 — SILENCE_DEBOUNCE_MS raised from 2500 → 4000ms
-//  Bug 2 — isFlushingRef lock prevents concurrent flushes
-//  Bug 3 — recognition.onend auto-restarts mic if still recording
-//  Bug 4 — enqueueAudio removed from saveInstruction (no auto-play during recording)
-//  Bug 5 — flushPendingBufferRef keeps recognition.onresult closure fresh
-//  Bug 6 — checkSessionComplete guards against firing before any saves have started
+// PERFORMANCE FIXES applied on top of existing bug fixes:
+//  Perf 1 — SILENCE_DEBOUNCE_MS reduced 4000 → 2500ms
+//  Perf 2 — isFilteringRef replaces isFlushingRef: lock held ONLY during GPT filter call (~1s)
+//           not during TTS saves (was 3-6s). TTS saves now fire-and-forget.
+//  Perf 3 — Auto-retry: if filter is in progress when new text arrives, schedule a 300ms retry
+//           so accumulated text is flushed immediately once the filter finishes
+//  Perf 4 — Auto-flush after filter: if text accumulated while filter ran, flush it in 100ms
+//  Perf 5 — Error recovery: restore pendingText on filter failure so the text is not lost
+//
+// Bugs preserved from previous version:
+//  Bug 1 (debounce) — now LOWER (2500ms) for performance
+//  Bug 2 (lock)     — isFilteringRef is the new, narrower lock
+//  Bug 3 (onend)    — recognition.onend auto-restarts mic if still recording
+//  Bug 4 (no autoplay) — enqueueAudio removed from saveInstruction
+//  Bug 5 (ref)      — flushPendingBufferRef keeps closure fresh
+//  Bug 6 (guard)    — saveEverStartedRef still guards checkSessionComplete
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Mic, Square, Trash2, Loader2, AlertCircle, Sparkles, CheckCircle2, Volume2, ArrowRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
 
-// FIX 1 — raised from 2500 to 4000 so natural mid-thought pauses don't cut early
-const SILENCE_DEBOUNCE_MS = 4000;
+// PERF 1 — reduced from 4000 to 2500ms for snappier response
+const SILENCE_DEBOUNCE_MS = 2500;
 
 const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const { showNotification } = useApp();
@@ -26,16 +35,18 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const [isSessionComplete, setIsSessionComplete] = useState(false);
   const [error, setError] = useState(null);
 
-  const recognitionRef       = useRef(null);
-  const transcriptEndRef     = useRef(null);
-  const silenceTimerRef      = useRef(null);
-  const pendingTextRef       = useRef('');
+  const recognitionRef        = useRef(null);
+  const transcriptEndRef      = useRef(null);
+  const silenceTimerRef       = useRef(null);
+  const pendingTextRef        = useRef('');
 
-  // FIX 2 — lock so only one flush runs at a time
-  const isFlushingRef        = useRef(false);
-  // FIX 3 — track whether the mic should be live so onend can restart
-  const isRecordingRef       = useRef(false);
-  // FIX 5 — always-current ref to flushPendingBuffer for the recognition closure
+  // PERF 2 — narrow lock: only held during GPT filter call (~1s), NOT during TTS saves
+  const isFilteringRef        = useRef(false);
+  // PERF 3 — retry timer: schedules a re-flush if filter is busy when silence fires
+  const retryTimerRef         = useRef(null);
+  // Bug 3 — track whether the mic should be live so onend can restart
+  const isRecordingRef        = useRef(false);
+  // Bug 5 — always-current ref to flushPendingBuffer for the recognition closure
   const flushPendingBufferRef = useRef(null);
 
   // ─── Audio queue refs ──────────────────────────────────────────────────────
@@ -48,7 +59,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   const sessionInstructionsRef = useRef([]);
   const pendingSavesRef        = useRef(0);
   const stopRequestedRef       = useRef(false);
-  // FIX 6 — track whether at least one save has been kicked off
+  // Bug 6 — track whether at least one save has been kicked off
   const saveEverStartedRef     = useRef(false);
 
   // ─── 1. INIT SPEECH RECOGNITION ───────────────────────────────────────────
@@ -74,7 +85,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
           setPendingText(updated);
           setCurrentBuffer('');
           clearTimeout(silenceTimerRef.current);
-          // FIX 5 — call via ref so closure always has the latest function
+          // Bug 5 — call via ref so closure always has the latest function
           silenceTimerRef.current = setTimeout(
             () => flushPendingBufferRef.current?.(),
             SILENCE_DEBOUNCE_MS
@@ -94,7 +105,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       }
     };
 
-    // FIX 3 — if still recording when Chrome kills the session, restart immediately
+    // Bug 3 — if still recording when Chrome kills the session, restart immediately
     recognition.onend = () => {
       if (isRecordingRef.current) {
         console.log('[Recognition] onend fired while still recording — restarting mic');
@@ -107,7 +118,10 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     };
 
     recognitionRef.current = recognition;
-    return () => clearTimeout(silenceTimerRef.current);
+    return () => {
+      clearTimeout(silenceTimerRef.current);
+      clearTimeout(retryTimerRef.current);
+    };
   }, []);
 
   // ─── 2. SESSION COMPLETE CHECK ─────────────────────────────────────────────
@@ -116,7 +130,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       stopRequestedRef.current &&
       pendingSavesRef.current === 0 &&
       !isExtracting &&
-      // FIX 6 — only complete if saves were actually started (not just isRecording=false)
+      // Bug 6 — only complete if saves were actually started
       saveEverStartedRef.current &&
       sessionInstructionsRef.current.length > 0
     ) {
@@ -143,7 +157,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     if (!isExtracting) checkSessionComplete();
   }, [isExtracting, checkSessionComplete]);
 
-  // ─── 3. AUDIO QUEUE (kept for the per-item replay button only) ─────────────
+  // ─── 3. AUDIO QUEUE (per-item replay button only) ──────────────────────────
   const processAudioQueue = useCallback(() => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
 
@@ -161,7 +175,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       .then(() => console.log('[Audio] Playing'))
       .catch(err => {
         console.error('[Audio] Blocked:', err);
-        isPlayingRef.current   = false;
+        isPlayingRef.current    = false;
         currentAudioRef.current = null;
         setInstructionsList(prev =>
           prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
@@ -170,7 +184,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       });
 
     audio.onended = () => {
-      isPlayingRef.current   = false;
+      isPlayingRef.current    = false;
       currentAudioRef.current = null;
       setInstructionsList(prev =>
         prev.map(item => item.id === itemId ? { ...item, isPlaying: false } : item)
@@ -189,24 +203,28 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-    isPlayingRef.current      = false;
-    audioQueueRef.current     = [];
+    isPlayingRef.current  = false;
+    audioQueueRef.current = [];
     enqueueAudio(url, itemId);
   }, [enqueueAudio]);
 
   // ─── 4. FLUSH BUFFER → GPT EXTRACTION ─────────────────────────────────────
   const flushPendingBuffer = useCallback(async () => {
-    // FIX 2 — bail if a flush is already running; the queued text stays in
-    // pendingTextRef and will be picked up by the next silence timer or by stopRecording
-    if (isFlushingRef.current) {
-      console.log('[Flush] Already flushing — skipping concurrent call');
+    // PERF 2 — only the filter call is locked now, NOT the TTS saves
+    if (isFilteringRef.current) {
+      // PERF 3 — schedule a retry so accumulated text doesn't get dropped
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = setTimeout(
+        () => flushPendingBufferRef.current?.(),
+        300
+      );
       return;
     }
 
     const text = pendingTextRef.current.trim();
     if (!text || text.length < 5) return;
 
-    isFlushingRef.current  = true;
+    isFilteringRef.current = true;
     pendingTextRef.current = '';
     setPendingText('');
     setIsExtracting(true);
@@ -215,33 +233,47 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       const result       = await apiService.filterLiveChunk(text);
       const instructions = result?.instructions || [];
 
-      if (instructions.length === 0) return;
+      if (instructions.length > 0) {
+        const newItems = instructions.map(instructionText => ({
+          id: Date.now() + Math.random(),
+          text: instructionText,
+          status: 'saving',
+          isPlaying: false,
+          audioUrl: null,
+        }));
 
-      const newItems = instructions.map(instructionText => ({
-        id: Date.now() + Math.random(),
-        text: instructionText,
-        status: 'saving',
-        isPlaying: false,
-        audioUrl: null,
-      }));
+        setInstructionsList(prev => [...prev, ...newItems]);
 
-      setInstructionsList(prev => [...prev, ...newItems]);
+        // Bug 6 — mark that at least one save cycle has started
+        saveEverStartedRef.current = true;
 
-      // FIX 6 — mark that at least one save cycle has started
-      saveEverStartedRef.current = true;
-
-      // Run saves in parallel — order in the UI is preserved by item ids
-      await Promise.all(newItems.map(item => saveInstruction(item.id, item.text)));
-
+        // PERF 2 + PERF 4 — fire-and-forget: do NOT await saves.
+        // Lock is released immediately after the GPT filter call so the next
+        // silence window can start a new filter cycle right away.
+        // TTS saves run in the background via pendingSavesRef counter.
+        newItems.forEach(item => saveInstruction(item.id, item.text));
+      }
     } catch (err) {
       console.error('[Flush] Failed:', err);
+      // PERF 5 — restore text on failure so it can be retried
+      pendingTextRef.current = text;
+      setPendingText(text);
     } finally {
       setIsExtracting(false);
-      isFlushingRef.current = false;
+      isFilteringRef.current = false;
+
+      // PERF 4 — if new speech arrived while filter was running, flush immediately
+      if (pendingTextRef.current.trim().length >= 5) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(
+          () => flushPendingBufferRef.current?.(),
+          100
+        );
+      }
     }
   }, []); // eslint-disable-line
 
-  // FIX 5 — keep the ref current so the recognition closure always calls latest
+  // Bug 5 — keep the ref current so the recognition closure always calls latest
   useEffect(() => {
     flushPendingBufferRef.current = flushPendingBuffer;
   }, [flushPendingBuffer]);
@@ -263,14 +295,11 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       // Accumulate into session
       sessionInstructionsRef.current.push({ text: instructionText, audioUrl });
 
-      // FIX 4 — DO NOT call enqueueAudio here.
-      // Audio must NOT play out loud while the teacher is still recording.
-      // Playback is only triggered by the Play button in SegmentWorkspace.
-
+      // Bug 4 — DO NOT call enqueueAudio here. Audio must NOT play while recording.
       if (onComplete) onComplete(saveResult);
 
     } catch (err) {
-      console.error('[S3] Save failed:', err);
+      console.error('[Save] Failed:', err);
       setInstructionsList(prev =>
         prev.map(item =>
           item.id === itemId ? { ...item, status: 'error' } : item
@@ -298,15 +327,16 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     setInstructionsList([]);
     setCurrentBuffer('');
     setPendingText('');
-    pendingTextRef.current       = '';
-    audioQueueRef.current        = [];
-    isPlayingRef.current         = false;
-    isFlushingRef.current        = false;   // FIX 2 — reset lock on new session
-    saveEverStartedRef.current   = false;   // FIX 6 — reset guard
+    pendingTextRef.current         = '';
+    audioQueueRef.current          = [];
+    isPlayingRef.current           = false;
+    isFilteringRef.current         = false;   // PERF 2 — reset filter lock
+    saveEverStartedRef.current     = false;   // Bug 6 — reset guard
     sessionInstructionsRef.current = [];
-    pendingSavesRef.current      = 0;
-    stopRequestedRef.current     = false;
+    pendingSavesRef.current        = 0;
+    stopRequestedRef.current       = false;
     clearTimeout(silenceTimerRef.current);
+    clearTimeout(retryTimerRef.current);     // PERF 3 — clear retry timer
 
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -315,7 +345,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
 
     if (recognitionRef.current) {
       try {
-        isRecordingRef.current = true;  // FIX 3 — set before start so onend knows
+        isRecordingRef.current = true;  // Bug 3 — set before start so onend knows
         recognitionRef.current.start();
         setIsRecording(true);
       } catch (err) {
@@ -326,15 +356,16 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   };
 
   const stopRecording = () => {
-    isRecordingRef.current = false;     // FIX 3 — prevent onend from restarting
+    isRecordingRef.current = false;     // Bug 3 — prevent onend from restarting
     if (recognitionRef.current) recognitionRef.current.stop();
     clearTimeout(silenceTimerRef.current);
+    clearTimeout(retryTimerRef.current);
     setIsRecording(false);
     setCurrentBuffer('');
 
     stopRequestedRef.current = true;
 
-    // Flush any speech that was buffered when Stop was pressed, then check complete
+    // Flush any speech buffered when Stop was pressed, then check session complete
     if (pendingTextRef.current.trim()) {
       flushPendingBuffer().then(() => checkSessionComplete());
     } else {
@@ -343,9 +374,10 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
   };
 
   const handleDiscard = () => {
-    isRecordingRef.current = false;     // FIX 3 — prevent restart on discard
+    isRecordingRef.current = false;     // Bug 3 — prevent restart on discard
     if (recognitionRef.current) recognitionRef.current.stop();
     clearTimeout(silenceTimerRef.current);
+    clearTimeout(retryTimerRef.current);
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
@@ -353,7 +385,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
     pendingTextRef.current         = '';
     audioQueueRef.current          = [];
     isPlayingRef.current           = false;
-    isFlushingRef.current          = false;
+    isFilteringRef.current         = false;
     saveEverStartedRef.current     = false;
     sessionInstructionsRef.current = [];
     pendingSavesRef.current        = 0;
@@ -389,14 +421,14 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
           </p>
         </div>
         <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
-          isRecording              ? 'bg-red-100 text-red-700 animate-pulse'
+          isRecording                   ? 'bg-red-100 text-red-700 animate-pulse'
           : isExtracting || stillSaving ? 'bg-yellow-100 text-yellow-700'
-          : isSessionComplete      ? 'bg-green-100 text-green-700'
+          : isSessionComplete           ? 'bg-green-100 text-green-700'
           : 'bg-gray-100 text-gray-500'
         }`}>
-          {isRecording    ? '● RECORDING'
-           : isExtracting  ? '⟳ EXTRACTING...'
-           : stillSaving   ? '⟳ SAVING...'
+          {isRecording      ? '● RECORDING'
+           : isExtracting   ? '⟳ EXTRACTING...'
+           : stillSaving    ? '⟳ SAVING...'
            : isSessionComplete ? '✓ DONE'
            : '○ IDLE'}
         </div>
