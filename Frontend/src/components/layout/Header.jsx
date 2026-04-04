@@ -5,57 +5,65 @@ import { Search, Bell, ChevronDown } from 'lucide-react';
 
 const Header = () => {
   return (
-    <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex items-center justify-between">
+    <div className="bg-white border-b border-gray-100 px-4 sm:px-6 py-3 flex items-center justify-between flex-shrink-0 h-14">
 
-      {/* Search - Hidden on mobile, shown on tablet+ */}
-      <div className="hidden md:flex items-center gap-4 flex-1 max-w-xl">
-        <div className="relative flex-1">
-          <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+      {/* Left spacer / mobile logo */}
+      <div className="w-10 lg:hidden" />
+
+      {/* Search bar — centered, hidden on small mobile */}
+      <div className="flex-1 max-w-xl mx-4 hidden sm:block">
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             placeholder="Search recordings or jobs..."
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
           />
         </div>
       </div>
 
-      {/* Mobile: Just logo */}
-      <div className="md:hidden flex-1">
-        <span className="text-lg font-bold text-blue-600">APD Tool</span>
-      </div>
+      {/* Mobile: just search icon */}
+      <div className="sm:hidden flex-1" />
 
-      {/* Right icons */}
-      <div className="flex items-center gap-2 sm:gap-4">
-        {/* Search icon for mobile */}
-        <button className="md:hidden p-2 hover:bg-gray-100 rounded-lg">
-          <Search className="w-5 h-5 text-gray-600" />
+      {/* Right: notification + user */}
+      <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
+        {/* Mobile search */}
+        <button className="sm:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg">
+          <Search className="w-5 h-5" />
         </button>
 
-        {/* Notifications */}
+        {/* Bell */}
         <div className="relative">
-          <button className="p-2 hover:bg-gray-100 rounded-lg">
-            <Bell className="w-5 h-6 text-gray-600" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
+            <Bell className="w-5 h-5" />
           </button>
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-1 ring-white" />
         </div>
 
-        {/* User Profile */}
-        <div className="hidden sm:flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded-lg px-2 py-1">
+        {/* User */}
+        <button className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 rounded-xl transition-colors">
+          <div className="relative">
+            <img
+              src="https://ui-avatars.com/api/?name=Shaun+Ola&background=4F46E5&color=fff&size=64"
+              alt="User"
+              className="w-7 h-7 rounded-full"
+            />
+            <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full ring-1 ring-white" />
+          </div>
+          <span className="text-sm font-semibold text-gray-700">Shaun co</span>
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+        </button>
+
+        {/* Mobile avatar */}
+        <div className="sm:hidden relative">
           <img
-            src="https://ui-avatars.com/api/?name=Shaun+Ola&background=4F46E5&color=fff"
+            src="https://ui-avatars.com/api/?name=Shaun+Ola&background=4F46E5&color=fff&size=64"
             alt="User"
-            className="w-8 h-8 rounded-full"
+            className="w-8 h-8 rounded-full cursor-pointer"
           />
-          <span className="font-medium text-gray-700 hidden lg:block">Shaun</span>
-          <ChevronDown className="w-4 h-4 text-gray-500 hidden lg:block" />
+          <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full ring-1 ring-white" />
         </div>
-
-        {/* Mobile: Just avatar */}
-        <img
-          src="https://ui-avatars.com/api/?name=Shaun+Ola&background=4F46E5&color=fff"
-          alt="User"
-          className="sm:hidden w-8 h-8 rounded-full cursor-pointer"
-        />
       </div>
     </div>
   );

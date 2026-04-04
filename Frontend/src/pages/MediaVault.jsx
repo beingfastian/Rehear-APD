@@ -1,29 +1,70 @@
 // Frontend/src/pages/MediaVault.jsx
 
-import React, { useState } from 'react';
-import { Filter, Grid, Loader2, RefreshCw } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Filter, SlidersHorizontal, Loader2, RefreshCw, MoreHorizontal, Trash2, Eye, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import Table from '../components/shared/Table';
-import Pagination from '../components/shared/Pagination';
 import FileUpload from '../components/shared/FileUpload';
 
+// ── Row action dropdown ───────────────────────────────────────────────────────
+const ActionMenu = ({ item, onView, onDelete }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+      >
+        <MoreHorizontal className="w-4 h-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-50 bg-white border border-gray-100 rounded-xl shadow-lg py-1 w-36 text-sm">
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onView(item); }}
+            className="flex items-center gap-2 px-4 py-2 w-full text-left text-gray-700 hover:bg-gray-50"
+          >
+            <Eye className="w-3.5 h-3.5" /> View
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(item); }}
+            className="flex items-center gap-2 px-4 py-2 w-full text-left text-red-500 hover:bg-red-50"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── MediaVault ────────────────────────────────────────────────────────────────
 const MediaVault = ({ setCurrentPage }) => {
-  const { jobs, setCurrentJob, isLoadingJobs, refreshJobs } = useApp();
-  const [itemsPerPage] = useState(10);
-  const [currentPageNum, setCurrentPageNum] = useState(1);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { jobs, setCurrentJob, isLoadingJobs, refreshJobs, deleteJob } = useApp();
+  const [itemsPerPage]     = useState(10);
+  const [currentPageNum,  setCurrentPageNum]  = useState(1);
+  const [isRefreshing,    setIsRefreshing]    = useState(false);
 
-  const columns = [
-    { key: 'name', label: 'File Name & Format' },
-    { key: 'type', label: 'Processing Type' },
-    { key: 'duration', label: 'Duration' },
-    { key: 'status', label: 'Status' },
-    { key: 'action', label: 'Action' }
-  ];
+  // pagination
+  const totalPages   = Math.ceil(jobs.length / itemsPerPage);
+  const startIndex   = (currentPageNum - 1) * itemsPerPage;
+  const paginatedJobs = jobs.slice(startIndex, startIndex + itemsPerPage);
 
-  const handleRowClick = async (item) => {
+  const handleView = async (item) => {
     await setCurrentJob(item);
     setCurrentPage('segment');
+  };
+
+  const handleDelete = async (item) => {
+    if (window.confirm(`Delete "${item.name}"?`)) {
+      await deleteJob(item.id);
+    }
   };
 
   const handleUploadSuccess = async (job) => {
@@ -33,107 +74,158 @@ const MediaVault = ({ setCurrentPage }) => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    try {
-      await refreshJobs();
-    } finally {
-      setIsRefreshing(false);
-    }
+    try { await refreshJobs(); } finally { setIsRefreshing(false); }
   };
 
-  const renderRow = (item) => (
-    <>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-        {item.name}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-        {item.type}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-        {item.duration}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-          item.status === 'Completed'
-            ? 'bg-green-100 text-green-700'
-            : 'bg-yellow-100 text-yellow-700'
-        }`}>
-          {item.status}
-        </span>
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm">
-        <input type="checkbox" className="w-4 h-4 text-blue-600 border-gray-300 rounded" />
-      </td>
-    </>
-  );
-
-  // Paginate jobs
-  const startIndex = (currentPageNum - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedJobs = jobs.slice(startIndex, endIndex);
-
   return (
-    <div className="p-4 sm:p-6">
-      <div className="flex items-center justify-between mb-4 sm:mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-          Media Vault
-        </h1>
-        
+    <div className="p-6 max-w-screen-xl mx-auto">
+      {/* Title */}
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Media Vault</h1>
         <button
           onClick={handleRefresh}
           disabled={isRefreshing}
-          className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
+          className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600
+                     hover:bg-gray-50 disabled:opacity-50 transition-colors"
         >
           <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200">
-        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <h3 className="font-semibold text-gray-900 text-sm sm:text-base">
-            All Audio Recordings ({jobs.length})
-            {isLoadingJobs && (
-              <span className="ml-2 text-xs text-gray-500">
-                <Loader2 className="inline w-3 h-3 animate-spin" /> Loading...
-              </span>
-            )}
+      {/* Table card */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+        {/* Table header row */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+          <h3 className="font-bold text-gray-900">
+            All Audio Recordings
+            {isLoadingJobs && <Loader2 className="inline w-4 h-4 animate-spin ml-2 text-gray-400" />}
           </h3>
-
-          <div className="flex gap-2 items-center w-full sm:w-auto">
-            <Filter className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 cursor-pointer" />
-            <Grid className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400 cursor-pointer" />
-            <div className="flex-1 sm:flex-initial">
-              <FileUpload onSuccess={handleUploadSuccess} />
-            </div>
+          <div className="flex items-center gap-2">
+            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">
+              <Filter className="w-4 h-4" />
+            </button>
+            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors">
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+            {/* Ingest button wraps FileUpload */}
+            <FileUpload onSuccess={handleUploadSuccess} label="Ingest New Media +" />
           </div>
         </div>
 
+        {/* Table */}
         {isLoadingJobs ? (
-          <div className="px-4 sm:px-6 py-8 sm:py-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-4" />
-            <p className="text-gray-500 text-sm sm:text-base">Loading recordings from database...</p>
+          <div className="py-16 text-center">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-3" />
+            <p className="text-sm text-gray-400">Loading recordings…</p>
           </div>
         ) : paginatedJobs.length > 0 ? (
           <>
-            <Table
-              columns={columns}
-              data={paginatedJobs}
-              renderRow={renderRow}
-              onRowClick={handleRowClick}
-            />
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50/60">
+                  <tr>
+                    {['File Name & Format', 'Processing Type', 'Duration', 'Status', 'Action'].map((col) => (
+                      <th key={col} className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        <span className="inline-flex items-center gap-1">
+                          {col}
+                          {col !== 'Action' && <ChevronDown className="w-3 h-3" />}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {paginatedJobs.map((item) => (
+                    <tr
+                      key={item.id}
+                      onClick={() => handleView(item)}
+                      className="hover:bg-gray-50/70 cursor-pointer transition-colors"
+                    >
+                      <td className="px-6 py-4 text-sm font-medium text-gray-800">{item.name}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">{item.type}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">{item.duration}</td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          item.status === 'Completed'
+                            ? 'bg-green-50 text-green-600'
+                            : 'bg-orange-50 text-orange-500'
+                        }`}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <ActionMenu item={item} onView={handleView} onDelete={handleDelete} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-            <Pagination
-              totalItems={jobs.length}
-              currentPage={currentPageNum}
-              itemsPerPage={itemsPerPage}
-            />
+            {/* Mobile card list */}
+            <div className="md:hidden divide-y divide-gray-50">
+              {paginatedJobs.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => handleView(item)}
+                  className="p-4 hover:bg-gray-50 cursor-pointer"
+                >
+                  <div className="flex items-start justify-between mb-1">
+                    <span className="font-medium text-sm text-gray-800 truncate flex-1">{item.name}</span>
+                    <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      item.status === 'Completed' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-500'
+                    }`}>{item.status}</span>
+                  </div>
+                  <p className="text-xs text-gray-400">{item.type} · {item.duration}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Pagination */}
+            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <span>Rows per page</span>
+                <span className="inline-flex items-center gap-1 font-medium text-gray-700">
+                  {itemsPerPage} <ChevronDown className="w-3 h-3" />
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPageNum(p => Math.max(1, p - 1))}
+                  disabled={currentPageNum === 1}
+                  className="p-1.5 text-gray-400 hover:text-gray-700 disabled:opacity-30 rounded"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                {Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setCurrentPageNum(p)}
+                    className={`w-8 h-8 rounded-lg text-sm font-medium ${
+                      p === currentPageNum
+                        ? 'bg-blue-500 text-white'
+                        : 'text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setCurrentPageNum(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPageNum === totalPages || totalPages === 0}
+                  className="p-1.5 text-gray-400 hover:text-gray-700 disabled:opacity-30 rounded"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
           </>
         ) : (
-          <div className="px-4 sm:px-6 py-8 sm:py-12 text-center">
-            <p className="text-gray-500 mb-4 text-sm sm:text-base">
-              No recordings yet. Upload your first audio file!
-            </p>
-            <FileUpload onSuccess={handleUploadSuccess} />
+          <div className="py-16 text-center">
+            <p className="text-sm text-gray-400 mb-4">No recordings yet.</p>
+            <FileUpload onSuccess={handleUploadSuccess} label="Ingest New Media +" />
           </div>
         )}
       </div>

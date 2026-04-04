@@ -1,4 +1,4 @@
-// Frontend/src/App.js - UPDATED WITH LIVE TRANSCRIPTION
+// Frontend/src/App.js
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
@@ -7,41 +7,45 @@ import Header from './components/layout/Header';
 import Dashboard from './pages/Dashboard';
 import MediaVault from './pages/MediaVault';
 import SegmentWorkspace from './pages/SegmentWorkspace';
-import LiveTranscriptionPage from './pages/LiveTranscriptionPage'; // NEW IMPORT
+import LiveRecordingPage from './pages/LiveRecordingPage';
 import Notification from './components/shared/Notification';
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [pageData, setPageData] = useState({});
   const { notification, showNotification } = useApp();
+
+  const navigateTo = (page, data = {}) => {
+    setCurrentPage(page);
+    setPageData(data);
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
-      <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} />
-      
+      <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} />
+
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
-        
+
         <div className="flex-1 overflow-auto">
           {currentPage === 'dashboard' && (
-            <Dashboard setCurrentPage={setCurrentPage} />
+            <Dashboard setCurrentPage={navigateTo} />
           )}
-          
           {currentPage === 'media' && (
-            <MediaVault setCurrentPage={setCurrentPage} />
+            <MediaVault setCurrentPage={navigateTo} />
           )}
-          
           {currentPage === 'segment' && (
             <SegmentWorkspace />
           )}
-          
-          {/* NEW: Live Transcription Page */}
-          {currentPage === 'live-transcription' && (
-            <LiveTranscriptionPage setCurrentPage={setCurrentPage} />
+          {currentPage === 'live-recording' && (
+            <LiveRecordingPage
+              recordingName={pageData.recordingName || 'New Recording'}
+              setCurrentPage={navigateTo}
+            />
           )}
         </div>
       </div>
 
-      {/* Global Notification Toast */}
       {notification && (
         <Notification
           message={notification.message}
