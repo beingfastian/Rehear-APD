@@ -9,8 +9,11 @@ from typing import List, Optional
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import secrets
 import boto3
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends
+import bcrypt as _bcrypt
+from jose import JWTError, jwt
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
@@ -19,7 +22,7 @@ from dotenv import load_dotenv
 import wave
 import asyncio
 
-from database import init_db, get_db, AudioJob, Instruction, AudioChunk
+from database import init_db, get_db, User, AudioJob, Instruction, AudioChunk
 
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent
@@ -54,6 +57,49 @@ AWS_REGION  = os.getenv("AWS_REGION")
 # PERF — increased from 4 → 8 workers to handle concurrent TTS generation
 executor = ThreadPoolExecutor(max_workers=8)
 
+# ============================================================================
+# AUTH CONFIG
+# ============================================================================
+
+JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 30
+
+
+def hash_password(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def create_token(user_id: int, email: str) -> str:
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "exp": datetime.utcnow().timestamp() + JWT_EXPIRE_DAYS * 86400,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization.split(" ", 1)[1]
+    payload = decode_token(token)
+    user = db.query(User).filter_by(id=int(payload["sub"])).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
 
 # ============================================================================
 # MODELS
@@ -69,6 +115,17 @@ class JobResponse(BaseModel):
 
 class TextSubmission(BaseModel):
     text: str
+
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 # ============================================================================
@@ -253,6 +310,43 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
 # ============================================================================
 # ROUTES
 # ============================================================================
+
+# --- Auth ---
+
+@app.post("/api/auth/signup")
+async def auth_signup(body: SignupRequest, db: Session = Depends(get_db)):
+    body.name = body.name.strip()
+    body.email = body.email.strip().lower()
+    if len(body.name) < 2:
+        raise HTTPException(status_code=400, detail="Name too short")
+    if "@" not in body.email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if db.query(User).filter_by(email=body.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(name=body.name, email=body.email, hashed_password=hash_password(body.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_token(user.id, user.email)
+    return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    user = db.query(User).filter_by(email=email).first()
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_token(user.id, user.email)
+    return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+
+@app.get("/api/auth/me")
+async def auth_me(current_user: User = Depends(get_current_user)):
+    return {"user": {"id": current_user.id, "name": current_user.name, "email": current_user.email}}
+
 
 @app.get("/")
 async def root():

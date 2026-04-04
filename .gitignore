@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files — never commit secrets
+backend/.env
+APD-REHEAR/.env
+.env
+
+# Node dependencies
+node_modules/
+APD-REHEAR/node_modules/
+APD-REHEAR/dist/
+
+# Build outputs
+Frontend/build/
+APD-REHEAR/dist/
+
+# Misc
+.DS_Store
+*.log

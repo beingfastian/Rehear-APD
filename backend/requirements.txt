@@ -10,3 +10,5 @@ boto3
 celery[redis]
 redis
 python-multipart
+bcrypt
+python-jose[cryptography]

@@ -40,16 +40,16 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
       {/* Sidebar */}
       <div className={`
         fixed lg:static inset-y-0 left-0 z-40
-        w-56 bg-white border-r border-gray-100 h-screen flex flex-col
+        w-56 bg-white border-r border-sky-100 h-screen flex flex-col
         transform transition-transform duration-300 ease-in-out
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         {/* Logo */}
-        <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-center">
+        <div className="px-4 py-5 border-b border-sky-100 flex items-center justify-center bg-gradient-to-b from-sky-50 to-white">
           <img
             src="/APD LOGO.png"
             alt="APD Tool"
-            className="h-10 w-auto object-contain"
+            className="h-20 w-auto object-contain"
           />
         </div>
 
@@ -65,24 +65,24 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
                   flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer
                   transition-all duration-150 group relative
                   ${active
-                    ? 'bg-blue-50 text-blue-600'
-                    : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'}
+                    ? 'bg-sky-50 text-sky-600'
+                    : 'text-slate-500 hover:bg-sky-50 hover:text-sky-700'}
                 `}
               >
                 {active && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-blue-600 rounded-r-full" />
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-sky-600 rounded-r-full" />
                 )}
-                <item.icon className={`w-4.5 h-4.5 flex-shrink-0 ${active ? 'text-blue-600' : 'text-gray-400 group-hover:text-gray-600'}`} style={{ width: 18, height: 18 }} />
-                <span className={`text-sm font-medium truncate ${active ? 'text-blue-600' : ''}`}>{item.label}</span>
+                <item.icon className={`w-4.5 h-4.5 flex-shrink-0 ${active ? 'text-sky-600' : 'text-slate-400 group-hover:text-sky-600'}`} style={{ width: 18, height: 18 }} />
+                <span className={`text-sm font-medium truncate ${active ? 'text-sky-600' : ''}`}>{item.label}</span>
               </div>
             );
           })}
         </nav>
 
         {/* Logout */}
-        <div className="px-3 py-4 border-t border-gray-100">
+        <div className="px-3 py-4 border-t border-sky-100">
           <button
-            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
+            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
             onClick={() => {/* logout logic */}}
           >
             <LogOut style={{ width: 18, height: 18 }} className="flex-shrink-0" />

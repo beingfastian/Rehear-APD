@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, JSON, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -20,6 +20,17 @@ Base = declarative_base()
 
 
 # Models
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    email = Column(String(200), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(300), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class AudioJob(Base):
     __tablename__ = "audio_jobs"
 
