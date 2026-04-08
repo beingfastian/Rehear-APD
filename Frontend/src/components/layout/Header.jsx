@@ -2,20 +2,12 @@
 
 import React from 'react';
 import { Search, Bell, ChevronDown } from 'lucide-react';
-
-function getUser() {
-  try { return JSON.parse(localStorage.getItem('rehear_user')); } catch { return null; }
-}
-
-function getInitials(name) {
-  if (!name) return '?';
-  return name.trim().split(/\s+/).map(w => w[0].toUpperCase()).slice(0, 2).join('');
-}
+import { useApp } from '../../context/AppContext';
 
 const Header = () => {
-  const user = getUser();
+  const { authUser } = useApp();
+  const user = authUser;
   const displayName = user?.name || 'Guest';
-  const initials = getInitials(user?.name);
   const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4F46E5&color=fff&size=64`;
 
   return (

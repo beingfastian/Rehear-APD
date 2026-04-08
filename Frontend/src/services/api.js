@@ -4,6 +4,104 @@
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
 
 class ApiService {
+  async parseError(response, fallbackMessage) {
+    try {
+      const error = await response.json();
+      const detail = error?.detail;
+      if (typeof detail === 'string') {
+        return detail;
+      }
+      if (detail?.message) {
+        return detail.message;
+      }
+      if (error?.error) {
+        return error.error;
+      }
+    } catch (e) {
+      // Ignore parse errors and fall back to the provided message.
+    }
+
+    return fallbackMessage;
+  }
+
+  getAuthToken() {
+    return localStorage.getItem('rehear_token');
+  }
+
+  getAuthHeaders(extraHeaders = {}) {
+    const token = this.getAuthToken();
+    return token
+      ? { ...extraHeaders, Authorization: `Bearer ${token}` }
+      : extraHeaders;
+  }
+
+  async signup({ name, email, password }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, email, password }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to create account'));
+    }
+
+    return response.json();
+  }
+
+  async login({ email, password }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to sign in'));
+    }
+
+    return response.json();
+  }
+
+  async googleLogin(credential) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ credential }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Google sign-in failed'));
+    }
+
+    return response.json();
+  }
+
+  async getCurrentUser(token = this.getAuthToken()) {
+    if (!token) {
+      throw new Error('Missing token');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Session is not valid'));
+    }
+
+    return response.json();
+  }
+
   /**
    * Upload and analyze audio file
    * Returns instruction-based audio chunks (one per instruction)
@@ -20,19 +118,17 @@ class ApiService {
       const response = await fetch(`${API_BASE_URL}/analyze-audio`, {
         method: 'POST',
         body: formData,
+        headers: this.getAuthHeaders(),
         // Don't set Content-Type header - browser will set it with boundary for FormData
       });
 
       console.log('[API] Response status:', response.status);
 
       if (!response.ok) {
-        let errorMessage = 'Failed to analyze audio';
-        try {
-          const error = await response.json();
-          errorMessage = error.detail || error.error || errorMessage;
-        } catch (e) {
-          errorMessage = `Server error: ${response.status} ${response.statusText}`;
-        }
+        const errorMessage = await this.parseError(
+          response,
+          `Server error: ${response.status} ${response.statusText}`
+        );
         throw new Error(errorMessage);
       }
 
@@ -66,20 +162,14 @@ class ApiService {
     try {
       const response = await fetch(`${API_BASE_URL}/process-live-text`, {
         method: 'POST',
-        headers: {
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify({ text }),
       });
 
       if (!response.ok) {
-        let errorMessage = 'Failed to process transcription';
-        try {
-          const error = await response.json();
-          errorMessage = error.detail || error.error || errorMessage;
-        } catch (e) {
-          errorMessage = `Server error: ${response.status}`;
-        }
+        const errorMessage = await this.parseError(response, `Server error: ${response.status}`);
         throw new Error(errorMessage);
       }
 
@@ -105,9 +195,9 @@ class ApiService {
     try {
       const response = await fetch(`${API_BASE_URL}/filter-live-chunk`, {
         method: 'POST',
-        headers: {
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify({ text }),
       });
 
@@ -132,9 +222,9 @@ class ApiService {
       
       const response = await fetch(`${API_BASE_URL}/jobs`, {
         method: 'GET',
-        headers: {
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
       });
 
       if (!response.ok) {
@@ -162,9 +252,9 @@ class ApiService {
       
       const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
         method: 'GET',
-        headers: {
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
       });
 
       if (!response.ok) {
@@ -197,9 +287,9 @@ class ApiService {
       
       const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
         method: 'DELETE',
-        headers: {
+        headers: this.getAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
       });
 
       if (!response.ok) {
@@ -251,6 +341,53 @@ class ApiService {
       console.error('[API] Health check failed:', error);
       throw new Error('Cannot connect to backend. Make sure it is running on ' + API_BASE_URL);
     }
+  }
+
+  async getBillingPlans() {
+    const response = await fetch(`${API_BASE_URL}/api/billing/plans`, {
+      method: 'GET',
+      headers: this.getAuthHeaders({
+        'Content-Type': 'application/json',
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch billing plans: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async getBillingStatus() {
+    const response = await fetch(`${API_BASE_URL}/api/billing/me`, {
+      method: 'GET',
+      headers: this.getAuthHeaders({
+        'Content-Type': 'application/json',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorMessage = await this.parseError(response, `Server error: ${response.status}`);
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  }
+
+  async syncRevenueCatSubscription() {
+    const response = await fetch(`${API_BASE_URL}/api/billing/revenuecat/sync`, {
+      method: 'POST',
+      headers: this.getAuthHeaders({
+        'Content-Type': 'application/json',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorMessage = await this.parseError(response, `Server error: ${response.status}`);
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
   }
 
   /**

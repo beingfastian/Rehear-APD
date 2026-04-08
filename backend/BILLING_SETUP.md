@@ -49,17 +49,17 @@ Example:
 {
   "free": {
     "display_name": "Free",
-    "monthly_credits": 250,
+    "monthly_credits": 500,
     "entitlements": []
   },
   "go": {
     "display_name": "Go",
-    "monthly_credits": 5000,
+    "monthly_credits": 20000,
     "entitlements": ["go"]
   },
   "plus": {
     "display_name": "Plus",
-    "monthly_credits": 20000,
+    "monthly_credits": 60000,
     "entitlements": ["plus"]
   }
 }

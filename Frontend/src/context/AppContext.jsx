@@ -4,6 +4,26 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import apiService from '../services/api';
 
 const AppContext = createContext();
+const AUTH_TOKEN_KEY = 'rehear_token';
+const AUTH_USER_KEY = 'rehear_user';
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_USER_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function persistAuthSession(token, user) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+}
+
+function clearStoredAuthSession() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
 
 export const useApp = () => {
   const context = useContext(AppContext);
@@ -14,6 +34,10 @@ export const useApp = () => {
 };
 
 export const AppProvider = ({ children }) => {
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_KEY));
+  const [authUser, setAuthUser] = useState(() => readStoredUser());
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
   // Processing state
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
@@ -27,18 +51,81 @@ export const AppProvider = ({ children }) => {
   
   // Notifications
   const [notification, setNotification] = useState(null);
+  const isAuthenticated = Boolean(authToken && authUser);
 
   /**
-   * Load all jobs from database on mount
+   * Restore the current session on mount.
    */
   useEffect(() => {
-    loadJobsFromDatabase();
+    let isMounted = true;
+
+    const restoreSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      const candidateToken = urlToken || localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (!candidateToken) {
+        if (!isMounted) return;
+        setIsAuthReady(true);
+        setIsLoadingJobs(false);
+        return;
+      }
+
+      try {
+        const data = await apiService.getCurrentUser(candidateToken);
+        if (!isMounted) return;
+        persistAuthSession(candidateToken, data.user);
+        setAuthToken(candidateToken);
+        setAuthUser(data.user);
+        if (urlToken) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        clearStoredAuthSession();
+        setAuthToken(null);
+        setAuthUser(null);
+      } finally {
+        if (!isMounted) return;
+        setIsAuthReady(true);
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
+
+  /**
+   * Load jobs only after the user is authenticated.
+   */
+  useEffect(() => {
+    if (!isAuthReady) {
+      return;
+    }
+
+    if (!isAuthenticated) {
+      setJobs([]);
+      setCurrentJob(null);
+      setIsLoadingJobs(false);
+      return;
+    }
+
+    loadJobsFromDatabase();
+  }, [isAuthReady, isAuthenticated]);
 
   /**
    * Load jobs from PostgreSQL database via API
    */
   const loadJobsFromDatabase = async () => {
+    if (!isAuthenticated) {
+      setJobs([]);
+      setIsLoadingJobs(false);
+      return;
+    }
+
     try {
       setIsLoadingJobs(true);
       const data = await apiService.getAllJobs();
@@ -120,8 +207,46 @@ export const AppProvider = ({ children }) => {
    * Show notification toast
    */
   const showNotification = (message, type = 'info') => {
+    if (!message) {
+      setNotification(null);
+      return;
+    }
+
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  const applyAuthSession = (token, user) => {
+    persistAuthSession(token, user);
+    setAuthToken(token);
+    setAuthUser(user);
+  };
+
+  const loginWithPassword = async ({ email, password }) => {
+    const data = await apiService.login({ email, password });
+    applyAuthSession(data.token, data.user);
+    return data;
+  };
+
+  const signupWithPassword = async ({ name, email, password }) => {
+    const data = await apiService.signup({ name, email, password });
+    applyAuthSession(data.token, data.user);
+    return data;
+  };
+
+  const loginWithGoogle = async (credential) => {
+    const data = await apiService.googleLogin(credential);
+    applyAuthSession(data.token, data.user);
+    return data;
+  };
+
+  const logout = (message = 'Signed out of this device.') => {
+    clearStoredAuthSession();
+    setAuthToken(null);
+    setAuthUser(null);
+    setJobs([]);
+    setCurrentJob(null);
+    showNotification(message, 'info');
   };
 
   /**
@@ -333,6 +458,11 @@ export const AppProvider = ({ children }) => {
   };
 
   const value = {
+    authToken,
+    authUser,
+    isAuthenticated,
+    isAuthReady,
+
     // State
     jobs,
     currentJob,
@@ -352,6 +482,10 @@ export const AppProvider = ({ children }) => {
     refreshJobs,
     loadJobsFromDatabase,
     deleteJob, // NEW: Delete job
+    loginWithPassword,
+    signupWithPassword,
+    loginWithGoogle,
+    logout,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

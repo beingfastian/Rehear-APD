@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { LayoutDashboard, Music2, AlignLeft, Settings, HelpCircle, Menu, X, LogOut } from 'lucide-react';
 
-const Sidebar = ({ currentPage, setCurrentPage }) => {
+const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const menuItems = [
@@ -16,6 +16,13 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
 
   const handleNavigation = (page) => {
     setCurrentPage(page);
+    setIsMobileMenuOpen(false);
+  };
+
+  const handleLogout = () => {
+    if (onLogout) {
+      onLogout();
+    }
     setIsMobileMenuOpen(false);
   };
 
@@ -83,7 +90,7 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
         <div className="px-3 py-4 border-t border-sky-100">
           <button
             className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
-            onClick={() => {/* logout logic */}}
+            onClick={handleLogout}
           >
             <LogOut style={{ width: 18, height: 18 }} className="flex-shrink-0" />
             <span className="text-sm font-medium">Log out</span>
