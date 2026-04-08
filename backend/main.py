@@ -133,6 +133,13 @@ class LoginRequest(BaseModel):
 class OtpVerifyRequest(BaseModel):
     email: str
     otp: str
+class ForgotPasswordRequest(BaseModel):
+    email: str
+ 
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
 
 
 # ============================================================================
@@ -433,6 +440,63 @@ async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
 async def auth_me(current_user: User = Depends(get_current_user)):
     return {"user": {"id": current_user.id, "name": current_user.name, "email": current_user.email}}
 
+@app.post("/api/auth/forgot-password")
+async def auth_forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Step 1 of password reset.
+    Generates a fresh OTP (10-minute expiry), stores it in the existing
+    otp_code / otp_expires_at columns, and emails it.
+    Always returns the same message to prevent email enumeration.
+    """
+    email = body.email.strip().lower()
+    user  = db.query(User).filter_by(email=email).first()
+ 
+    if user:
+        otp = generate_otp()
+        user.otp_code       = otp
+        user.otp_expires_at = datetime.utcnow() + __import__('datetime').timedelta(minutes=10)
+        db.commit()
+        try:
+            await send_otp_email(email, otp, user.name)
+        except Exception as exc:
+            print(f"[forgot-password] email send error: {exc}")
+ 
+    return {
+        "message": "If that email is registered, a reset code has been sent.",
+        "email": email,
+    }
+ 
+ 
+@app.post("/api/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Step 2 of password reset.
+    Verifies the OTP, hashes and saves the new password, then clears the OTP.
+    """
+    email = body.email.strip().lower()
+ 
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+ 
+    user = db.query(User).filter_by(email=email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="No account found for that email")
+ 
+    if not user.otp_code or not user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="No reset code found. Please request a new one.")
+ 
+    if datetime.utcnow() > user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="Reset code has expired. Please request a new one.")
+ 
+    if user.otp_code != body.otp.strip():
+        raise HTTPException(status_code=400, detail="Incorrect reset code")
+ 
+    user.hashed_password = hash_password(body.new_password)
+    user.otp_code        = None
+    user.otp_expires_at  = None
+    db.commit()
+ 
+    return {"message": "Password reset successfully. You can now log in with your new password."}
 
 @app.get("/")
 async def root():

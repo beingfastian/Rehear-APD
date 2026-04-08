@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { LayoutDashboard, Music2, AlignLeft, Settings, HelpCircle, Menu, X, LogOut } from 'lucide-react';
 
-const Sidebar = ({ currentPage, setCurrentPage }) => {
+const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const menuItems = [
@@ -17,6 +17,12 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
   const handleNavigation = (page) => {
     setCurrentPage(page);
     setIsMobileMenuOpen(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('rehear_token');
+    localStorage.removeItem('rehear_user');
+    if (onLogout) onLogout();
   };
 
   return (
@@ -72,7 +78,10 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
                 {active && (
                   <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-sky-600 rounded-r-full" />
                 )}
-                <item.icon className={`w-4.5 h-4.5 flex-shrink-0 ${active ? 'text-sky-600' : 'text-slate-400 group-hover:text-sky-600'}`} style={{ width: 18, height: 18 }} />
+                <item.icon
+                  className={`flex-shrink-0 ${active ? 'text-sky-600' : 'text-slate-400 group-hover:text-sky-600'}`}
+                  style={{ width: 18, height: 18 }}
+                />
                 <span className={`text-sm font-medium truncate ${active ? 'text-sky-600' : ''}`}>{item.label}</span>
               </div>
             );
@@ -83,11 +92,7 @@ const Sidebar = ({ currentPage, setCurrentPage }) => {
         <div className="px-3 py-4 border-t border-sky-100">
           <button
             className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
-            onClick={() => {
-              localStorage.removeItem('rehear_token');
-              localStorage.removeItem('rehear_user');
-              window.location.href = 'http://localhost:5173';
-            }}
+            onClick={handleLogout}
           >
             <LogOut style={{ width: 18, height: 18 }} className="flex-shrink-0" />
             <span className="text-sm font-medium">Log out</span>

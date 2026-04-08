@@ -3,8 +3,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, ChevronDown, LogOut } from 'lucide-react';
 
-const TOKEN_KEY = 'rehear_token';
-
 function getStoredUser() {
   try {
     const raw = localStorage.getItem('rehear_user');
@@ -14,21 +12,13 @@ function getStoredUser() {
   }
 }
 
-function logout() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem('rehear_user');
-  // Redirect back to landing page
-  window.location.href = 'http://localhost:5173';
-}
-
-const Header = () => {
+const Header = ({ onLogout }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
   const user = getStoredUser();
   const displayName = user?.name || 'User';
   const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -38,6 +28,12 @@ const Header = () => {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('rehear_token');
+    localStorage.removeItem('rehear_user');
+    if (onLogout) onLogout();
+  };
 
   return (
     <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -86,7 +82,7 @@ const Header = () => {
                 <p className="text-xs text-gray-400 truncate">{user?.email || ''}</p>
               </div>
               <button
-                onClick={logout}
+                onClick={handleLogout}
                 className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
