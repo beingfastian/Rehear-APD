@@ -413,7 +413,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
       <div className="flex items-center justify-between bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
         <div>
           <h2 className="text-lg font-bold flex items-center gap-2 text-gray-800">
-            <Sparkles className={`w-5 h-5 ${isRecording ? 'text-blue-500' : 'text-gray-400'}`} />
+            <Sparkles className={`w-5 h-5 ${isRecording ? 'text-sky-500' : 'text-gray-400'}`} />
             Smart Instruction Filter
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
@@ -464,7 +464,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
           <div key={item.id} className="flex items-start gap-3">
             <div className="min-w-[28px] h-7 flex items-center justify-center mt-0.5">
               {item.status === 'saving' ? (
-                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
               ) : item.status === 'saved' ? (
                 <CheckCircle2 className="w-5 h-5 text-green-500" />
               ) : (
@@ -478,10 +478,10 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
             {item.status === 'saved' && item.audioUrl && (
               <button
                 onClick={() => replayAudio(item.audioUrl, item.id)}
-                className="p-1.5 text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0"
+                className="p-1.5 text-gray-400 hover:text-sky-500 transition-colors flex-shrink-0"
                 title="Replay"
               >
-                <Volume2 className={`w-4 h-4 ${item.isPlaying ? 'text-blue-500' : ''}`} />
+                <Volume2 className={`w-4 h-4 ${item.isPlaying ? 'text-sky-500' : ''}`} />
               </button>
             )}
           </div>
@@ -503,8 +503,8 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
 
         {isExtracting && (
           <div className="flex items-center gap-3 opacity-60">
-            <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-            <p className="text-sm text-blue-500 italic">Extracting instructions...</p>
+            <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
+            <p className="text-sm text-sky-500 italic">Extracting instructions...</p>
           </div>
         )}
 
@@ -523,7 +523,7 @@ const LiveTranscriptionRecorder = ({ onComplete, onSessionComplete }) => {
         {!isRecording && !isSessionComplete && (
           <button
             onClick={startRecording}
-            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2"
+            className="px-8 py-4 bg-sky-600 hover:bg-sky-700 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2"
           >
             <Mic className="w-6 h-6" />
             {instructionsList.length > 0 ? 'RESUME' : 'START'}

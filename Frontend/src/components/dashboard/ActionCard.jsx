@@ -12,7 +12,7 @@ const ActionCard = ({ icon: Icon, title, description, buttonText, buttonVariant 
         onClick={onClick}
         className={`w-full sm:w-auto px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium ${
           buttonVariant === 'primary' 
-            ? 'bg-blue-500 text-white hover:bg-blue-600' 
+            ? 'bg-sky-500 text-white hover:bg-sky-600' 
             : 'border border-gray-300 hover:bg-gray-50'
         }`}
       >

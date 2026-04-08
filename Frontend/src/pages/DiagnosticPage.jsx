@@ -145,7 +145,7 @@ const DiagnosticPage = () => {
       </div>
 
       {/* Actions */}
-      <div className="bg-blue-50 border border-blue-200 p-6 rounded">
+      <div className="bg-sky-50 border border-sky-200 p-6 rounded">
         <h3 className="font-bold mb-2">🔧 Quick Fixes:</h3>
         <ol className="list-decimal list-inside space-y-2 text-sm">
           <li>Set REACT_APP_API_URL in Vercel Environment Variables</li>
@@ -158,7 +158,7 @@ const DiagnosticPage = () => {
       <div className="mt-6">
         <button
           onClick={runDiagnostics}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          className="px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600"
         >
           🔄 Re-run Diagnostics
         </button>

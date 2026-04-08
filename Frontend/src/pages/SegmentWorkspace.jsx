@@ -235,7 +235,7 @@ const SegmentWorkspace = () => {
     <div className="flex flex-col h-full bg-gray-50">
 
       {/* ── Top bar ── */}
-      <div className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <div className="bg-white border-b border-sky-100 px-6 py-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold text-gray-900 truncate">{currentJob.name}</h1>
           {currentJob.fromLive && (
@@ -254,7 +254,7 @@ const SegmentWorkspace = () => {
           </button>
           <button
             onClick={exportAllChunks}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-sm font-medium transition-colors shadow-sm shadow-blue-200"
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-sky-500 to-sky-700 hover:from-sky-600 hover:to-sky-800 text-white rounded-2xl text-sm font-medium transition-colors shadow-sm shadow-sky-200"
           >
             Export All Chunks
           </button>
@@ -265,9 +265,9 @@ const SegmentWorkspace = () => {
       <div className="flex-1 overflow-hidden flex gap-0 min-h-0">
 
         {/* Left: Transcript */}
-        <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">
+        <div className="flex-1 flex flex-col min-w-0 border-r border-sky-100">
           {/* Search */}
-          <div className="p-4 border-b border-gray-100 bg-white">
+          <div className="p-4 border-b border-sky-100 bg-white">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
@@ -275,7 +275,7 @@ const SegmentWorkspace = () => {
                 placeholder="Search chunks or word..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
               />
             </div>
           </div>
@@ -297,13 +297,13 @@ const SegmentWorkspace = () => {
                           );
                           if (matchIdx >= 0) playStep(matchIdx);
                         }}
-                        className="flex-shrink-0 w-7 h-7 bg-blue-500 rounded-full flex items-center justify-center mt-0.5 hover:bg-blue-600 transition-colors shadow-sm shadow-blue-200"
+                        className="flex-shrink-0 w-7 h-7 bg-sky-500 rounded-full flex items-center justify-center mt-0.5 hover:bg-sky-600 transition-colors shadow-sm shadow-sky-200"
                       >
                         <Play className="w-3 h-3 text-white" />
                       </button>
                     )}
                     <p className={`text-sm leading-relaxed ${
-                      seg.isInstruction ? 'text-blue-600 font-medium' : 'text-gray-600'
+                      seg.isInstruction ? 'text-sky-600 font-medium' : 'text-slate-600'
                     }`}>
                       {seg.sentence}
                     </p>
@@ -316,7 +316,7 @@ const SegmentWorkspace = () => {
 
         {/* Right: AI-Generated Learning Modules */}
         <div className="w-80 xl:w-96 flex-shrink-0 bg-white overflow-y-auto">
-          <div className="p-5 border-b border-gray-100">
+          <div className="p-5 border-b border-sky-100">
             <h3 className="font-bold text-gray-900">AI-Generated Learning Modules</h3>
           </div>
 
@@ -329,9 +329,9 @@ const SegmentWorkspace = () => {
 
           <div className="p-4 space-y-3">
             {currentJob.instructions?.map((inst, instIdx) => (
-              <div key={instIdx} className="rounded-xl border border-gray-100 overflow-hidden">
+              <div key={instIdx} className="rounded-xl border border-sky-100 overflow-hidden">
                 {/* Instruction title */}
-                <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                <div className="px-4 py-3 bg-gray-50 border-b border-sky-100">
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{inst.instruction}</p>
                 </div>
 
@@ -344,22 +344,22 @@ const SegmentWorkspace = () => {
                     <div
                       key={stepIdx}
                       className={`p-4 transition-colors ${
-                        isActive ? 'bg-blue-50' : 'bg-white hover:bg-gray-50'
+                        isActive ? 'bg-sky-50' : 'bg-white hover:bg-gray-50'
                       }`}
                     >
                       <p className={`text-sm font-medium mb-3 leading-snug ${
-                        isActive ? 'text-blue-700' : 'text-gray-800'
+                        isActive ? 'text-sky-700' : 'text-gray-800'
                       }`}>
                         <span className="font-bold">Step {globalIdx + 1}:</span> {step.text}
                         {isActive && isPlaying && (
-                          <span className="ml-2 text-xs text-blue-500 font-semibold animate-pulse">▶ Playing</span>
+                          <span className="ml-2 text-xs text-sky-500 font-semibold animate-pulse">▶ Playing</span>
                         )}
                       </p>
 
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => globalIdx >= 0 ? playStep(globalIdx) : null}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition-colors"
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-semibold transition-colors"
                         >
                           {isLoading && isActive ? (
                             <Loader2 className="w-3 h-3 animate-spin" />
@@ -419,7 +419,7 @@ const SegmentWorkspace = () => {
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={() => setShuffle(s => !s)}
-            className={`p-1.5 rounded-lg transition-colors ${shuffle ? 'text-blue-500' : 'text-gray-400 hover:text-gray-700'}`}
+            className={`p-1.5 rounded-lg transition-colors ${shuffle ? 'text-sky-500' : 'text-gray-400 hover:text-gray-700'}`}
           >
             <Shuffle className="w-4 h-4" />
           </button>
@@ -427,7 +427,7 @@ const SegmentWorkspace = () => {
           <button
             onClick={prevStep}
             disabled={currentStepIdx === 0}
-            className="p-1.5 text-gray-600 hover:text-gray-900 disabled:opacity-30 transition-colors"
+            className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 transition-colors"
           >
             <SkipBack className="w-5 h-5" />
           </button>
@@ -435,7 +435,7 @@ const SegmentWorkspace = () => {
           <button
             onClick={togglePlay}
             disabled={isLoading || !!audioError}
-            className="w-10 h-10 bg-gray-900 hover:bg-gray-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 transition-colors shadow-sm"
+            className="w-10 h-10 bg-slate-900 hover:bg-slate-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 transition-colors shadow-sm"
           >
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -449,14 +449,14 @@ const SegmentWorkspace = () => {
           <button
             onClick={nextStep}
             disabled={!shuffle && currentStepIdx === allSteps.length - 1}
-            className="p-1.5 text-gray-600 hover:text-gray-900 disabled:opacity-30 transition-colors"
+            className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 transition-colors"
           >
             <SkipForward className="w-5 h-5" />
           </button>
 
           <button
             onClick={() => setRepeat(r => !r)}
-            className={`p-1.5 rounded-lg transition-colors ${repeat ? 'text-blue-500' : 'text-gray-400 hover:text-gray-700'}`}
+            className={`p-1.5 rounded-lg transition-colors ${repeat ? 'text-sky-500' : 'text-slate-400 hover:text-slate-700'}`}
           >
             <Repeat className="w-4 h-4" />
           </button>

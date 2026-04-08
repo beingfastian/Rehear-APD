@@ -30,10 +30,10 @@ const Notification = ({ message, type = 'info', onClose }) => {
     },
     info: {
       icon: Info,
-      bgColor: 'bg-blue-50',
-      borderColor: 'border-blue-200',
-      textColor: 'text-blue-800',
-      iconColor: 'text-blue-600',
+      bgColor: 'bg-sky-50',
+      borderColor: 'border-sky-200',
+      textColor: 'text-sky-800',
+      iconColor: 'text-sky-600',
     },
   };
 

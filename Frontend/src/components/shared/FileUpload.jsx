@@ -49,8 +49,8 @@ const FileUpload = ({ onSuccess, label }) => {
           ${isProcessing
             ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
             : label
-              ? 'bg-blue-500 hover:bg-blue-600 text-white shadow-sm shadow-blue-200'
-              : 'bg-blue-500 hover:bg-blue-600 text-white shadow-sm shadow-blue-200'
+              ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm shadow-sky-200'
+              : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm shadow-sky-200'
           }
         `}
       >
@@ -75,7 +75,7 @@ const FileUpload = ({ onSuccess, label }) => {
           </div>
           <div className="w-full bg-gray-100 rounded-full h-1.5">
             <div
-              className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+              className="bg-sky-500 h-1.5 rounded-full transition-all duration-300"
               style={{ width: `${processingProgress}%` }}
             />
           </div>

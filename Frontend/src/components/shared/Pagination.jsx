@@ -23,7 +23,7 @@ const Pagination = ({ totalItems, currentPage = 1, itemsPerPage = 10 }) => {
           <button className="p-1 border border-gray-300 rounded hover:bg-gray-50">
             <ChevronLeft className="w-3 h-3 sm:w-4 sm:h-4" />
           </button>
-          <button className="px-2 sm:px-3 py-1 bg-blue-500 text-white rounded text-xs sm:text-sm">1</button>
+          <button className="px-2 sm:px-3 py-1 bg-sky-500 text-white rounded text-xs sm:text-sm">1</button>
           {totalPages > 1 && (
             <button className="px-2 sm:px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 text-xs sm:text-sm">2</button>
           )}

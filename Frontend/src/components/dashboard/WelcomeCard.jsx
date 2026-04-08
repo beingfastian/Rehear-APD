@@ -3,7 +3,7 @@ import { Mic, FileText } from 'lucide-react';
 
 const WelcomeCard = () => {
   return (
-    <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl p-4 sm:p-6 mb-4 sm:mb-6">
+    <div className="bg-gradient-to-r from-sky-50 to-sky-100 rounded-xl p-4 sm:p-6 mb-4 sm:mb-6">
       <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-2">
         Welcome back, Shaun! Ready to transform your audio?
       </h2>
@@ -13,8 +13,8 @@ const WelcomeCard = () => {
       
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <div className="bg-white rounded-lg p-3 sm:p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-            <Mic className="w-5 h-5 text-blue-600" />
+          <div className="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <Mic className="w-5 h-5 text-sky-600" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xl sm:text-2xl font-bold text-gray-900">9</div>
@@ -24,8 +24,8 @@ const WelcomeCard = () => {
         </div>
         
         <div className="bg-white rounded-lg p-3 sm:p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-            <FileText className="w-5 h-5 text-blue-600" />
+          <div className="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <FileText className="w-5 h-5 text-sky-600" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xl sm:text-2xl font-bold text-gray-900">148</div>
