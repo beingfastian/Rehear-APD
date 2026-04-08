@@ -1,0 +1,11 @@
+gpt-4o-mini per million token
+input token    $0.15
+cached token.  $0.075
+output token.  $0.60
+
+tts-1.         $1.50. per 100 thousand token
+
+whisper-1      $0.0001. per second 
+
+$3.7
+
