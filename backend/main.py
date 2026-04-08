@@ -9,11 +9,9 @@ from typing import List, Optional
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import secrets
 import boto3
-import bcrypt as _bcrypt
-from jose import JWTError, jwt
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header
+import secrets
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
@@ -21,6 +19,10 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 import wave
 import asyncio
+import bcrypt as _bcrypt
+from jose import JWTError, jwt
+from utils.email_service import send_otp_email, generate_otp
+from utils.email_validation import validate_email_domain
 
 from database import init_db, get_db, User, AudioJob, Instruction, AudioChunk
 
@@ -126,6 +128,11 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class OtpVerifyRequest(BaseModel):
+    email: str
+    otp: str
 
 
 # ============================================================================
@@ -323,14 +330,88 @@ async def auth_signup(body: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid email")
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    # Validate email domain (MX check + blocklist)
+    valid, err = await validate_email_domain(body.email)
+    if not valid:
+        raise HTTPException(status_code=400, detail=err or "Invalid email domain")
+
     if db.query(User).filter_by(email=body.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    user = User(name=body.name, email=body.email, hashed_password=hash_password(body.password))
+
+    otp = generate_otp()
+    otp_expires = datetime.utcnow() + __import__('datetime').timedelta(minutes=2)
+
+    user = User(
+        name=body.name,
+        email=body.email,
+        hashed_password=hash_password(body.password),
+        status="pending",
+        email_verified=False,
+        otp_code=otp,
+        otp_expires_at=otp_expires,
+    )
     db.add(user)
     db.commit()
-    db.refresh(user)
-    token = create_token(user.id, user.email)
-    return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+
+    await send_otp_email(body.email, otp, body.name)
+
+    return {
+        "message": "Account created. Please check your email for a 6-digit verification code.",
+        "email": body.email,
+        "status": "pending",
+    }
+
+
+@app.post("/api/auth/verify-otp")
+async def auth_verify_otp(body: OtpVerifyRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    user = db.query(User).filter_by(email=email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    if user.email_verified:
+        raise HTTPException(status_code=400, detail="Email already verified")
+    if not user.otp_expires_at or datetime.utcnow() > user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+    if user.otp_code != body.otp.strip():
+        raise HTTPException(status_code=400, detail="Invalid OTP code")
+
+    user.email_verified = True
+    user.status = "active"
+    user.otp_code = None
+    user.otp_expires_at = None
+    db.commit()
+
+    return {"message": "Email verified successfully. You can now log in."}
+
+
+# Simple in-memory rate limiter for resend-otp (5/min per email)
+import time
+_resend_log: dict[str, list] = {}
+
+@app.post("/api/auth/resend-otp")
+async def auth_resend_otp(email: str = Query(...), db: Session = Depends(get_db)):
+    email = email.strip().lower()
+
+    # Rate limit: max 5 requests per minute per email
+    now = time.time()
+    calls = _resend_log.get(email, [])
+    calls = [t for t in calls if now - t < 60]
+    if len(calls) >= 5:
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait a minute.")
+    calls.append(now)
+    _resend_log[email] = calls
+
+    user = db.query(User).filter_by(email=email).first()
+    # Always return same message to avoid revealing whether email exists
+    if user and not user.email_verified:
+        otp = generate_otp()
+        user.otp_code = otp
+        user.otp_expires_at = datetime.utcnow() + __import__('datetime').timedelta(minutes=2)
+        db.commit()
+        await send_otp_email(email, otp, user.name)
+
+    return {"message": "If that email is registered and unverified, a new code has been sent."}
 
 
 @app.post("/api/auth/login")
@@ -339,6 +420,11 @@ async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter_by(email=email).first()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before logging in. Check your inbox for the code.",
+        )
     token = create_token(user.id, user.email)
     return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
 
@@ -379,14 +465,15 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 
         try:
             print(f"[{job_id}] Transcribing audio...")
-            transcription = transcribe_audio(temp_path)
+            loop = asyncio.get_event_loop()
+            transcription = await loop.run_in_executor(executor, transcribe_audio, temp_path)
 
             print(f"[{job_id}] Extracting instructions...")
-            instructions_data = detect_instructions(transcription)
+            instructions_data = await loop.run_in_executor(executor, detect_instructions, transcription)
             instruction_list  = instructions_data.get("instructions", [])
 
             print(f"[{job_id}] Generating TTS in parallel and saving to database...")
-            save_to_database(job_id, transcription, instructions_data, db)
+            await loop.run_in_executor(executor, save_to_database, job_id, transcription, instructions_data, db)
 
             instructions_formatted = []
             for idx, instruction_text in enumerate(instruction_list):
@@ -523,18 +610,22 @@ Output: ["Click the save button", "Export as PDF"]
 Input: "hi how are you doing today that's great"
 Output: []"""
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": raw_text}
-            ],
-            temperature=0.1,
-            max_tokens=300,    # PERF — reduced from 500; instructions are short
-            timeout=15,        # PERF — hard cap so slow calls fail fast and retry
-        )
+        def do_request():
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": raw_text}
+                ],
+                temperature=0.1,
+                max_tokens=800,    # PERF — increased slightly for robust batching
+                timeout=25,        # PERF — increased slightly for larger chunks
+            )
+            return res.choices[0].message.content.strip()
 
-        raw_output = response.choices[0].message.content.strip()
+        loop = asyncio.get_event_loop()
+        raw_output = await loop.run_in_executor(executor, do_request)
+
         print(f"[filter-live-chunk] Input: {raw_text[:100]}")
         print(f"[filter-live-chunk] Output: {raw_output}")
 
@@ -554,7 +645,8 @@ Output: []"""
         return {"instructions": []}
     except Exception as e:
         print(f"[filter-live-chunk] Error: {str(e)}")
-        return {"instructions": []}
+        # PROD FIX: Pass error to frontend so it can backoff and retry without dropping the text buffer!
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/jobs")

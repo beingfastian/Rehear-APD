@@ -170,8 +170,8 @@ const Dashboard = ({ setCurrentPage }) => {
         ) : recentActivity.length > 0 ? (
           <RecentActivityTable data={recentActivity} setCurrentPage={setCurrentPage} />
         ) : (
-          <div className="py-12 text-center">
-            <p className="text-sm text-gray-400 mb-4">No recordings yet. Upload your first audio file!</p>
+          <div className="py-12 flex flex-col items-center gap-4">
+            <p className="text-sm text-gray-400">No recordings yet. Upload your first audio file!</p>
             <FileUpload onSuccess={handleUploadSuccess} />
           </div>
         )}

@@ -28,6 +28,10 @@ class User(Base):
     email = Column(String(200), unique=True, index=True, nullable=False)
     hashed_password = Column(String(300), nullable=False)
     is_active = Column(Boolean, default=True)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    otp_code = Column(String(6), nullable=True)
+    otp_expires_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="pending", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -66,9 +70,23 @@ class AudioChunk(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Create all tables
+# Create all tables + safe column migrations
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Safe migrations — add new columns if they don't exist yet
+    migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pending'",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(__import__('sqlalchemy').text(sql))
+                conn.commit()
+            except Exception:
+                conn.rollback()
 
 
 # Dependency to get DB session

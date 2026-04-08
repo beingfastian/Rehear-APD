@@ -1,82 +1,99 @@
 // Frontend/src/components/layout/Header.jsx
 
-import React from 'react';
-import { Search, Bell, ChevronDown } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Search, ChevronDown, LogOut } from 'lucide-react';
 
-function getUser() {
-  try { return JSON.parse(localStorage.getItem('rehear_user')); } catch { return null; }
+const TOKEN_KEY = 'rehear_token';
+
+function getStoredUser() {
+  try {
+    const raw = localStorage.getItem('rehear_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
-function getInitials(name) {
-  if (!name) return '?';
-  return name.trim().split(/\s+/).map(w => w[0].toUpperCase()).slice(0, 2).join('');
+function logout() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem('rehear_user');
+  // Redirect back to landing page
+  window.location.href = 'http://localhost:5173';
 }
 
 const Header = () => {
-  const user = getUser();
-  const displayName = user?.name || 'Guest';
-  const initials = getInitials(user?.name);
-  const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4F46E5&color=fff&size=64`;
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+  const user = getStoredUser();
+  const displayName = user?.name || 'User';
+  const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   return (
-    <div className="bg-white border-b border-sky-100 px-4 sm:px-6 py-3 flex items-center justify-between flex-shrink-0 h-14">
+    <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex items-center justify-between">
 
-      {/* Left spacer / mobile logo */}
-      <div className="w-10 lg:hidden" />
-
-      {/* Search bar — centered, hidden on small mobile */}
-      <div className="flex-1 max-w-xl mx-4 hidden sm:block">
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+      {/* Search — hidden on mobile */}
+      <div className="hidden md:flex items-center gap-4 flex-1 max-w-xl">
+        <div className="relative flex-1">
+          <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             placeholder="Search recordings or jobs..."
-            className="w-full pl-10 pr-4 py-2 bg-sky-50 border border-sky-200 rounded-xl text-sm
-                       focus:outline-none focus:ring-2 focus:ring-sky-400 focus:bg-white transition-all"
+            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </div>
 
-      {/* Mobile: just search icon */}
-      <div className="sm:hidden flex-1" />
+      {/* Mobile: logo */}
+      <div className="md:hidden flex-1">
+        <span className="text-lg font-bold text-blue-600">APD Tool</span>
+      </div>
 
-      {/* Right: notification + user */}
-      <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
-        {/* Mobile search */}
-        <button className="sm:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg">
-          <Search className="w-5 h-5" />
+      {/* Right side */}
+      <div className="flex items-center gap-2 sm:gap-4">
+        {/* Mobile search icon */}
+        <button className="md:hidden p-2 hover:bg-gray-100 rounded-lg">
+          <Search className="w-5 h-5 text-gray-600" />
         </button>
 
-        {/* Bell */}
-        <div className="relative">
-          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors">
-            <Bell className="w-5 h-5" />
+        {/* User profile dropdown */}
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={() => setDropdownOpen(o => !o)}
+            className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded-lg px-2 py-1"
+          >
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold select-none">
+              {initials}
+            </div>
+            <span className="font-medium text-gray-700 hidden lg:block">{displayName.split(' ')[0]}</span>
+            <ChevronDown className="w-4 h-4 text-gray-500 hidden lg:block" />
           </button>
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-1 ring-white" />
-        </div>
 
-        {/* User */}
-        <button className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 hover:bg-gray-50 rounded-xl transition-colors">
-          <div className="relative">
-            <img
-              src={avatarUrl}
-              alt={displayName}
-              className="w-7 h-7 rounded-full"
-            />
-            <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full ring-1 ring-white" />
-          </div>
-          <span className="text-sm font-semibold text-gray-700">{displayName}</span>
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-        </button>
-
-        {/* Mobile avatar */}
-        <div className="sm:hidden relative">
-          <img
-            src={avatarUrl}
-            alt={displayName}
-            className="w-8 h-8 rounded-full cursor-pointer"
-          />
-          <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-400 rounded-full ring-1 ring-white" />
+          {dropdownOpen && (
+            <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50">
+              <div className="px-4 py-2 border-b border-gray-100">
+                <p className="text-sm font-semibold text-gray-800 truncate">{displayName}</p>
+                <p className="text-xs text-gray-400 truncate">{user?.email || ''}</p>
+              </div>
+              <button
+                onClick={logout}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

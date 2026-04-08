@@ -32,7 +32,7 @@ const FileUpload = ({ onSuccess, label }) => {
   };
 
   return (
-    <div>
+    <div className="flex flex-col items-center">
       <input
         ref={fileInputRef}
         type="file"

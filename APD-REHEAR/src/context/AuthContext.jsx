@@ -9,6 +9,7 @@ import {
 import {
   fetchMe,
   getStoredToken,
+  getStoredUser,
   login as apiLogin,
   setStoredToken,
   setStoredUser,
@@ -18,16 +19,20 @@ import {
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => getStoredUser());
   const [token, setTokenState] = useState(() => getStoredToken());
   const [ready, setReady] = useState(false);
 
   const setToken = useCallback((t) => {
     setStoredToken(t);
     setTokenState(t || null);
-    if (!t) { setUser(null); setStoredUser(null); }
+    if (!t) {
+      setStoredUser(null);
+      setUser(null);
+    }
   }, []);
 
+  // On mount: validate stored token against /api/auth/me
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -38,10 +43,14 @@ export function AuthProvider({ children }) {
       }
       try {
         const { user: u } = await fetchMe(t);
-        if (!cancelled) setUser(u);
+        if (!cancelled) {
+          setUser(u);
+          setStoredUser(u);
+        }
       } catch {
         if (!cancelled) {
           setStoredToken(null);
+          setStoredUser(null);
           setTokenState(null);
           setUser(null);
         }
@@ -49,9 +58,7 @@ export function AuthProvider({ children }) {
         if (!cancelled) setReady(true);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const login = useCallback(async ({ email, password }) => {
@@ -63,13 +70,9 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // signup now just creates the account — does NOT log in yet (needs OTP)
   const signup = useCallback(async ({ name, email, password }) => {
-    const data = await apiSignup({ name, email, password });
-    setStoredToken(data.token);
-    setStoredUser(data.user);
-    setTokenState(data.token);
-    setUser(data.user);
-    return data;
+    return apiSignup({ name, email, password });
   }, []);
 
   const logout = useCallback(() => {
@@ -80,27 +83,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({
-      user,
-      token,
-      ready,
-      login,
-      signup,
-      logout,
-      setToken,
-    }),
+    () => ({ user, token, ready, login, signup, logout, setToken }),
     [user, token, ready, login, signup, logout, setToken],
   );
 
-  return (
-    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
