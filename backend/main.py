@@ -13,7 +13,7 @@ import secrets
 import boto3
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request,Body
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
@@ -23,7 +23,8 @@ import asyncio
 
 import billing
 import auth_utils
-from database import SessionLocal, init_db, get_db, User, AudioJob, Instruction, AudioChunk
+import email as email_utils
+from database import SessionLocal, init_db, get_db, User, AudioJob, Instruction, AudioChunk, PasswordResetCode
 
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent
@@ -157,6 +158,12 @@ class LoginRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     credential: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
 
 
 # ============================================================================
@@ -412,6 +419,50 @@ async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_token(user.id, user.email)
     return {"token": token, "user": serialize_user(user)}
+
+@app.post('/api/auth/forget-password')
+async def auth_forget_password(body: dict = Body(...), db: Session = Depends(get_db)):
+    email = auth_utils.normalize_email_or_raise(body.get("email"))
+    user = db.query(User).filter_by(email=email).first()
+    if user and user.auth_provider in (auth_utils.LOCAL_AUTH_PROVIDER, auth_utils.HYBRID_AUTH_PROVIDER):
+        code = email_utils.generate_reset_code()
+        reset = PasswordResetCode(user_id=user.id, code=code)
+        db.add(reset)
+        db.commit()
+        try:
+            await asyncio.to_thread(email_utils.send_reset_email, email, code)
+        except Exception as exc:
+            print(f"[Password Reset] Failed to send email to {email}: {exc}")
+    # Always return success to prevent email enumeration
+    return {"message": "If an account with that email exists, a password reset code has been sent."}
+
+
+@app.post("/api/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    email_addr = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email_addr).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    reset_entry = (
+        db.query(PasswordResetCode)
+        .filter_by(user_id=user.id, code=body.code, used=False)
+        .order_by(PasswordResetCode.created_at.desc())
+        .first()
+    )
+    if not reset_entry:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    if email_utils.is_code_expired(reset_entry.created_at):
+        raise HTTPException(status_code=400, detail="Reset code has expired")
+
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    reset_entry.used = True
+    user.hashed_password = hash_password(body.new_password)
+    db.commit()
+    return {"message": "Password has been reset successfully"}
 
 
 @app.post("/api/auth/google")
