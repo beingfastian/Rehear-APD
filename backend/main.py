@@ -10,21 +10,24 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
-import secrets
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Query
+import bcrypt as _bcrypt
+from jose import JWTError, jwt
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request,Body
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-import wave
 import asyncio
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
 from utils.email_service import send_otp_email, generate_otp
 from utils.email_validation import validate_email_domain
 
-from database import init_db, get_db, User, AudioJob, Instruction, AudioChunk
+import billing
+import auth_utils
+import mailer as email_utils
+from database import SessionLocal, init_db, get_db, User, AudioJob, Instruction, AudioChunk, PasswordResetCode
 
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent
@@ -66,6 +69,8 @@ executor = ThreadPoolExecutor(max_workers=8)
 JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "15"))
+PASSWORD_RESET_SUCCESS_MESSAGE = "If an account with that email exists, a password reset code has been sent."
 
 
 def hash_password(password: str) -> str:
@@ -73,6 +78,8 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    if not hashed:
+        return False
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
@@ -85,11 +92,34 @@ def create_token(user_id: int, email: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def create_password_reset_token(user_id: int, email: str, code: str) -> str:
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "code": code,
+        "scope": "password_reset",
+        "exp": datetime.utcnow().timestamp() + PASSWORD_RESET_TOKEN_EXPIRE_MINUTES * 60,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def decode_password_reset_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    if payload.get("scope") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    return payload
 
 
 def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
@@ -101,6 +131,68 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+def get_optional_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.split(" ", 1)[1]
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return None
+
+    return db.query(User).filter_by(id=int(payload["sub"])).first()
+
+
+def serialize_user(user: User) -> dict:
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "auth_provider": user.auth_provider,
+        "oauth_email_verified": bool(user.oauth_email_verified),
+        "revenuecat_app_user_id": billing.get_revenuecat_app_user_id(user),
+    }
+
+
+def invalidate_unused_reset_codes(db: Session, user_id: int) -> None:
+    db.query(PasswordResetCode).filter_by(user_id=user_id, used=False).update(
+        {"used": True},
+        synchronize_session=False,
+    )
+
+
+def issue_password_reset_code(db: Session, user: User) -> str:
+    invalidate_unused_reset_codes(db, user.id)
+    code = email_utils.generate_reset_code()
+    db.add(PasswordResetCode(user_id=user.id, code=code))
+    db.commit()
+    return code
+
+
+def get_matching_reset_entry(db: Session, user_id: int, code: str) -> Optional[PasswordResetCode]:
+    return (
+        db.query(PasswordResetCode)
+        .filter_by(user_id=user_id, code=code, used=False)
+        .order_by(PasswordResetCode.created_at.desc())
+        .first()
+    )
+
+
+def require_valid_reset_entry(db: Session, user: User, code: str) -> PasswordResetCode:
+    normalized_code = str(code).strip()
+    reset_entry = get_matching_reset_entry(db, user.id, normalized_code)
+    if not reset_entry:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    if email_utils.is_code_expired(reset_entry.created_at):
+        reset_entry.used = True
+        db.commit()
+        raise HTTPException(status_code=400, detail="Reset code has expired")
+
+    return reset_entry
 
 
 # ============================================================================
@@ -130,15 +222,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class OtpVerifyRequest(BaseModel):
-    email: str
-    otp: str
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
- 
-class ResetPasswordRequest(BaseModel):
+
+
+class VerifyResetCodeRequest(BaseModel):
     email: str
-    otp: str
+    code: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: Optional[str] = None
+    code: Optional[str] = None
+    reset_token: Optional[str] = None
     new_password: str
 
 
@@ -146,30 +246,38 @@ class ResetPasswordRequest(BaseModel):
 # HELPER FUNCTIONS
 # ============================================================================
 
-def transcribe_audio(audio_path: str) -> str:
+def transcribe_audio(audio_path: str) -> tuple[str, Optional[float]]:
     """Transcribe audio file using OpenAI Whisper."""
     with open(audio_path, 'rb') as audio_file:
         transcript = client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file,
-            response_format="text"
+            response_format="verbose_json"
         )
-    return transcript
+        print("Whisper 1 transcription result:")
+        print(transcript)
+    transcript_text = getattr(transcript, "text", str(transcript))
+    duration_seconds = getattr(transcript, "duration", None)
+    duration_value = float(duration_seconds) if duration_seconds is not None else None
+    return transcript_text, duration_value
 
 
-def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> str:
+def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> tuple[str, Optional[float]]:
     """Transcribe audio from bytes using OpenAI Whisper."""
     audio_file = io.BytesIO(audio_bytes)
     audio_file.name = filename
     transcript = client.audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
-        response_format="text"
+        response_format="verbose_json"
     )
-    return transcript
+    transcript_text = getattr(transcript, "text", str(transcript))
+    duration_seconds = getattr(transcript, "duration", None)
+    duration_value = float(duration_seconds) if duration_seconds is not None else None
+    return transcript_text, duration_value
 
 
-def detect_instructions(transcription: str) -> dict:
+def detect_instructions(transcription: str) -> tuple[dict, dict]:
     """
     Extract ONLY instructional sentences from transcription.
     NOTE: Only used by /analyze-audio (file upload workflow).
@@ -211,18 +319,25 @@ IMPORTANT: Return a flat array of instruction strings, NOT objects with steps.""
         temperature=0,
         timeout=20,  # PERF — hard timeout so slow calls don't block forever
     )
+    print('gpt 4o mini response:\n\n')
+    print(response)
 
-    result = json.loads(response.choices[0].message.content)
+    usage_meta = billing.usage_from_chat_response(response)
+    raw_content = response.choices[0].message.content or "{}"
+    try:
+        result = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return {"instructions": []}, usage_meta
 
     if "instructions" not in result:
-        return {"instructions": []}
+        return {"instructions": []}, usage_meta
 
     instructions = result["instructions"]
     if not isinstance(instructions, list):
-        return {"instructions": []}
+        return {"instructions": []}, usage_meta
 
     instructions = [str(inst) for inst in instructions if inst]
-    return {"instructions": instructions}
+    return {"instructions": instructions}, usage_meta
 
 
 def generate_tts_audio(text: str, job_id: str, instruction_idx: int) -> tuple:
@@ -239,7 +354,8 @@ def generate_tts_audio(text: str, job_id: str, instruction_idx: int) -> tuple:
         input=text,
         timeout=30,  # PERF — explicit timeout so hung TTS calls don't block threads
     )
-
+    print(f"[TTS] Generated audio for instruction {instruction_idx}: {text[:60]}...")
+    print(response)
     s3_key    = f"tts/{job_id}/instruction_{instruction_idx}.mp3"
     audio_bytes = response.read()
 
@@ -281,7 +397,7 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
     db.commit()
 
     if not instructions_list:
-        return
+        return []
 
     # PERF — generate ALL TTS files in parallel
     tts_results: dict[int, tuple] = {}
@@ -299,6 +415,7 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
                 tts_results[idx] = (None, None)
 
     # PERF — batch all ORM objects, single commit
+    saved_instructions: list[dict] = []
     for idx, instruction_text in enumerate(instructions_list):
         db.add(Instruction(
             job_id=job_id,
@@ -318,7 +435,24 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
                 s3_key=s3_key
             ))
 
+        saved_instructions.append({
+            "instruction_index": idx,
+            "instruction_text": instruction_text,
+            "audio_generated": bool(audio_url),
+            "audio_url": audio_url,
+            "s3_key": s3_key,
+        })
+
     db.commit()
+    return saved_instructions
+
+
+def save_to_database_in_new_session(job_id: str, transcription: str, instructions_data: dict):
+    db = SessionLocal()
+    try:
+        return save_to_database(job_id, transcription, instructions_data, db)
+    finally:
+        db.close()
 
 
 # ============================================================================
@@ -330,11 +464,9 @@ def save_to_database(job_id: str, transcription: str, instructions_data: dict, d
 @app.post("/api/auth/signup")
 async def auth_signup(body: SignupRequest, db: Session = Depends(get_db)):
     body.name = body.name.strip()
-    body.email = body.email.strip().lower()
     if len(body.name) < 2:
         raise HTTPException(status_code=400, detail="Name too short")
-    if "@" not in body.email:
-        raise HTTPException(status_code=400, detail="Invalid email")
+    body.email = await asyncio.to_thread(auth_utils.ensure_allowed_signup_email, body.email)
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
@@ -345,86 +477,26 @@ async def auth_signup(body: SignupRequest, db: Session = Depends(get_db)):
 
     if db.query(User).filter_by(email=body.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-
-    otp = generate_otp()
-    otp_expires = datetime.utcnow() + __import__('datetime').timedelta(minutes=2)
-
     user = User(
         name=body.name,
         email=body.email,
         hashed_password=hash_password(body.password),
-        status="pending",
-        email_verified=False,
-        otp_code=otp,
-        otp_expires_at=otp_expires,
+        auth_provider=auth_utils.LOCAL_AUTH_PROVIDER,
+        oauth_email_verified=False,
     )
     db.add(user)
     db.commit()
-
-    await send_otp_email(body.email, otp, body.name)
-
-    return {
-        "message": "Account created. Please check your email for a 6-digit verification code.",
-        "email": body.email,
-        "status": "pending",
-    }
-
-
-@app.post("/api/auth/verify-otp")
-async def auth_verify_otp(body: OtpVerifyRequest, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
-    user = db.query(User).filter_by(email=email).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found")
-    if user.email_verified:
-        raise HTTPException(status_code=400, detail="Email already verified")
-    if not user.otp_expires_at or datetime.utcnow() > user.otp_expires_at:
-        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
-    if user.otp_code != body.otp.strip():
-        raise HTTPException(status_code=400, detail="Invalid OTP code")
-
-    user.email_verified = True
-    user.status = "active"
-    user.otp_code = None
-    user.otp_expires_at = None
-    db.commit()
-
-    return {"message": "Email verified successfully. You can now log in."}
-
-
-# Simple in-memory rate limiter for resend-otp (5/min per email)
-import time
-_resend_log: dict[str, list] = {}
-
-@app.post("/api/auth/resend-otp")
-async def auth_resend_otp(email: str = Query(...), db: Session = Depends(get_db)):
-    email = email.strip().lower()
-
-    # Rate limit: max 5 requests per minute per email
-    now = time.time()
-    calls = _resend_log.get(email, [])
-    calls = [t for t in calls if now - t < 60]
-    if len(calls) >= 5:
-        raise HTTPException(status_code=429, detail="Too many requests. Please wait a minute.")
-    calls.append(now)
-    _resend_log[email] = calls
-
-    user = db.query(User).filter_by(email=email).first()
-    # Always return same message to avoid revealing whether email exists
-    if user and not user.email_verified:
-        otp = generate_otp()
-        user.otp_code = otp
-        user.otp_expires_at = datetime.utcnow() + __import__('datetime').timedelta(minutes=2)
-        db.commit()
-        await send_otp_email(email, otp, user.name)
-
-    return {"message": "If that email is registered and unverified, a new code has been sent."}
+    db.refresh(user)
+    token = create_token(user.id, user.email)
+    return {"token": token, "user": serialize_user(user)}
 
 
 @app.post("/api/auth/login")
 async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
+    email = auth_utils.normalize_email_or_raise(body.email)
     user = db.query(User).filter_by(email=email).first()
+    if user and user.auth_provider == auth_utils.GOOGLE_AUTH_PROVIDER and not user.hashed_password:
+        raise HTTPException(status_code=400, detail="This account uses Google sign-in")
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.email_verified:
@@ -433,12 +505,140 @@ async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
             detail="Please verify your email before logging in. Check your inbox for the code.",
         )
     token = create_token(user.id, user.email)
-    return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
+    return {"token": token, "user": serialize_user(user)}
+
+@app.post('/api/auth/forget-password')
+async def auth_forget_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email).first()
+    if user and user.auth_provider in (auth_utils.LOCAL_AUTH_PROVIDER, auth_utils.HYBRID_AUTH_PROVIDER):
+        code = issue_password_reset_code(db, user)
+        try:
+            await asyncio.to_thread(email_utils.send_reset_email, email, code)
+        except Exception as exc:
+            print(f"[Password Reset] Failed to send email to {email}: {exc}")
+    # Always return success to prevent email enumeration
+    return {"message": PASSWORD_RESET_SUCCESS_MESSAGE}
+
+
+@app.post('/api/auth/resend-reset-code')
+async def auth_resend_reset_code(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email).first()
+    if user and user.auth_provider in (auth_utils.LOCAL_AUTH_PROVIDER, auth_utils.HYBRID_AUTH_PROVIDER):
+        code = issue_password_reset_code(db, user)
+        try:
+            await asyncio.to_thread(email_utils.send_reset_email, email, code)
+        except Exception as exc:
+            print(f"[Password Reset] Failed to resend email to {email}: {exc}")
+    return {"message": PASSWORD_RESET_SUCCESS_MESSAGE}
+
+
+@app.post('/api/auth/verify-reset-code')
+async def auth_verify_reset_code(body: VerifyResetCodeRequest, db: Session = Depends(get_db)):
+    email_addr = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email_addr).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    reset_entry = require_valid_reset_entry(db, user, body.code)
+    reset_token = create_password_reset_token(user.id, user.email, reset_entry.code)
+    return {
+        "message": "Reset code verified successfully",
+        "reset_token": reset_token,
+    }
+
+
+@app.post("/api/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    if body.reset_token:
+        payload = decode_password_reset_token(body.reset_token)
+        user = db.query(User).filter_by(id=int(payload["sub"]), email=payload["email"]).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        reset_entry = require_valid_reset_entry(db, user, payload["code"])
+    else:
+        if not body.email or not body.code:
+            raise HTTPException(status_code=400, detail="Reset token or email and code are required")
+
+        email_addr = auth_utils.normalize_email_or_raise(body.email)
+        user = db.query(User).filter_by(email=email_addr).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+        reset_entry = require_valid_reset_entry(db, user, body.code)
+
+    reset_entry.used = True
+    user.hashed_password = hash_password(body.new_password)
+    db.commit()
+    return {"message": "Password has been reset successfully"}
+
+
+@app.post("/api/auth/google")
+async def auth_google(body: GoogleAuthRequest, db: Session = Depends(get_db)):
+    google_payload = await asyncio.to_thread(auth_utils.verify_google_credential, body.credential)
+    user = auth_utils.upsert_google_user(db, google_payload)
+    token = create_token(user.id, user.email)
+    return {"token": token, "user": serialize_user(user)}
 
 
 @app.get("/api/auth/me")
 async def auth_me(current_user: User = Depends(get_current_user)):
-    return {"user": {"id": current_user.id, "name": current_user.name, "email": current_user.email}}
+    return {"user": serialize_user(current_user)}
+
+
+@app.get("/api/billing/plans")
+async def get_billing_plans():
+    return {"plans": billing.get_public_plan_catalog()}
+
+
+@app.get("/api/billing/me")
+async def get_billing_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return billing.get_current_billing_summary(db, current_user)
+
+
+@app.post("/api/billing/revenuecat/sync")
+async def sync_revenuecat_state(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    billing.fetch_and_sync_revenuecat_state(db, current_user)
+    return billing.get_current_billing_summary(db, current_user)
+
+
+@app.post("/api/billing/revenuecat/webhook")
+async def revenuecat_webhook(request: Request, authorization: str = Header(None), db: Session = Depends(get_db)):
+    expected_authorization = os.getenv("REVENUECAT_WEBHOOK_AUTH")
+    if expected_authorization and authorization != expected_authorization:
+        raise HTTPException(status_code=401, detail="Invalid webhook authorization")
+
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
+
+    event = payload.get("event") or {}
+    event_id = event.get("id")
+    event_type = event.get("type", "UNKNOWN")
+    app_user_id = event.get("app_user_id")
+
+    if not event_id or not app_user_id:
+        return {"received": True, "ignored": True, "reason": "missing_event_metadata"}
+
+    if billing.webhook_already_processed(db, event_id):
+        return {"received": True, "duplicate": True, "event_id": event_id}
+
+    user = billing.find_user_by_revenuecat_app_user_id(db, app_user_id)
+    if not user:
+        return {"received": True, "ignored": True, "reason": "unknown_app_user_id", "event_id": event_id}
+
+    billing.fetch_and_sync_revenuecat_state(
+        db,
+        user,
+        app_user_id=app_user_id,
+        environment=event.get("environment"),
+    )
+    billing.mark_webhook_processed(db, event_id, event_type, payload)
+    return {"received": True, "event_id": event_id, "event_type": event_type}
 
 @app.post("/api/auth/forgot-password")
 async def auth_forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
@@ -517,11 +717,35 @@ async def root():
 
 
 @app.post("/analyze-audio")
-async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def analyze_audio(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
     """Standard file upload workflow — unchanged."""
+    transcription_event = None
+    extraction_event = None
+    tts_event = None
     try:
         job_id        = f"job_{uuid.uuid4().hex[:8]}"
         audio_content = await file.read()
+
+        if current_user:
+            estimated_transcription_credits, estimated_audio_seconds = billing.estimate_transcription_credits(audio_content)
+            transcription_event = billing.reserve_usage_event(
+                db,
+                current_user,
+                endpoint="/analyze-audio",
+                model="whisper-1",
+                operation="transcription",
+                estimated_credits=estimated_transcription_credits,
+                job_id=job_id,
+                request_metadata={
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "estimated_audio_seconds": estimated_audio_seconds,
+                },
+            )
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
             temp_file.write(audio_content)
@@ -529,15 +753,81 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
 
         try:
             print(f"[{job_id}] Transcribing audio...")
-            loop = asyncio.get_event_loop()
-            transcription = await loop.run_in_executor(executor, transcribe_audio, temp_path)
+            transcription, audio_duration_seconds = transcribe_audio(temp_path)
+
+            if transcription_event:
+                billing.finalize_usage_event(
+                    db,
+                    transcription_event,
+                    actual_credits=billing.credits_for_transcription_seconds(audio_duration_seconds),
+                    usage_values={
+                        "audio_seconds": audio_duration_seconds or 0,
+                        "file_size_bytes": len(audio_content),
+                    },
+                    response_metadata={"response_format": "verbose_json"},
+                )
+
+            if current_user:
+                extraction_event = billing.reserve_usage_event(
+                    db,
+                    current_user,
+                    endpoint="/analyze-audio",
+                    model="gpt-4o-mini",
+                    operation="instruction_extract",
+                    estimated_credits=billing.estimate_chat_credits_from_text(transcription),
+                    job_id=job_id,
+                )
 
             print(f"[{job_id}] Extracting instructions...")
-            instructions_data = await loop.run_in_executor(executor, detect_instructions, transcription)
+            instructions_data, instruction_usage = detect_instructions(transcription)
             instruction_list  = instructions_data.get("instructions", [])
 
+            if extraction_event:
+                billing.finalize_usage_event(
+                    db,
+                    extraction_event,
+                    actual_credits=billing.credits_for_chat_tokens(instruction_usage["total_tokens"]),
+                    usage_values=instruction_usage,
+                    response_metadata={"instruction_count": len(instruction_list)},
+                )
+
+            if current_user and instruction_list:
+                estimated_tts_credits = billing.credits_for_tts_characters(
+                    sum(len(text) for text in instruction_list)
+                )
+                tts_event = billing.reserve_usage_event(
+                    db,
+                    current_user,
+                    endpoint="/analyze-audio",
+                    model="tts-1",
+                    operation="tts_batch",
+                    estimated_credits=estimated_tts_credits,
+                    job_id=job_id,
+                    request_metadata={"instruction_count": len(instruction_list)},
+                )
+
             print(f"[{job_id}] Generating TTS in parallel and saving to database...")
-            await loop.run_in_executor(executor, save_to_database, job_id, transcription, instructions_data, db)
+            saved_instructions = save_to_database(job_id, transcription, instructions_data, db)
+
+            if tts_event:
+                successful_instruction_texts = [
+                    row["instruction_text"]
+                    for row in saved_instructions
+                    if row.get("audio_generated")
+                ]
+                total_characters = sum(len(text) for text in successful_instruction_texts)
+                billing.finalize_usage_event(
+                    db,
+                    tts_event,
+                    actual_credits=billing.credits_for_tts_characters(total_characters),
+                    usage_values={"input_characters": total_characters},
+                    response_metadata={
+                        "requested_count": len(instruction_list),
+                        "generated_count": len(successful_instruction_texts),
+                    },
+                )
+
+            billing.attach_job_to_user(db, current_user, job_id)
 
             instructions_formatted = []
             for idx, instruction_text in enumerate(instruction_list):
@@ -562,7 +852,8 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
                 "instructions": instructions_formatted,
                 "meta": {
                     "saved_to_db": True,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "billing": billing.get_current_billing_summary(db, current_user) if current_user else None,
                 }
             }
 
@@ -570,13 +861,27 @@ async def analyze_audio(file: UploadFile = File(...), db: Session = Depends(get_
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
+    except HTTPException:
+        db.rollback()
+        billing.release_usage_event(db, tts_event)
+        billing.release_usage_event(db, extraction_event)
+        billing.release_usage_event(db, transcription_event)
+        raise
     except Exception as e:
+        db.rollback()
+        billing.release_usage_event(db, tts_event, failure_reason=str(e))
+        billing.release_usage_event(db, extraction_event, failure_reason=str(e))
+        billing.release_usage_event(db, transcription_event, failure_reason=str(e))
         print(f"[Error] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/process-live-text")
-async def process_live_text(submission: TextSubmission, db: Session = Depends(get_db)):
+async def process_live_text(
+    submission: TextSubmission,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
     """
     Optimized live transcription save.
 
@@ -588,21 +893,56 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
 
     PERF — save_to_database now uses parallel TTS internally.
     """
+    tts_event = None
     try:
         job_id           = f"live_{uuid.uuid4().hex[:8]}"
         instruction_text = submission.text.strip()
 
+        if not instruction_text:
+            raise HTTPException(status_code=400, detail="Text is required")
+
         print(f"[{job_id}] Saving pre-filtered instruction: {instruction_text[:80]}")
+
+        if current_user and instruction_text:
+            tts_event = billing.reserve_usage_event(
+                db,
+                current_user,
+                endpoint="/process-live-text",
+                model="tts-1",
+                operation="tts_batch",
+                estimated_credits=billing.credits_for_tts_characters(len(instruction_text)),
+                job_id=job_id,
+            )
 
         # FIX #1: Skip detect_instructions() — already filtered by frontend
         instructions_data = {"instructions": [instruction_text]}
 
         # FIX #2: Run blocking TTS + S3 + DB work in thread pool
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
+        saved_instructions = await loop.run_in_executor(
             executor,
-            lambda: save_to_database(job_id, instruction_text, instructions_data, db)
+            lambda: save_to_database_in_new_session(job_id, instruction_text, instructions_data)
         )
+
+        if tts_event:
+            successful_instruction_texts = [
+                row["instruction_text"]
+                for row in saved_instructions
+                if row.get("audio_generated")
+            ]
+            total_characters = sum(len(text) for text in successful_instruction_texts)
+            billing.finalize_usage_event(
+                db,
+                tts_event,
+                actual_credits=billing.credits_for_tts_characters(total_characters),
+                usage_values={"input_characters": total_characters},
+                response_metadata={
+                    "requested_count": 1,
+                    "generated_count": len(successful_instruction_texts),
+                },
+            )
+
+        billing.attach_job_to_user(db, current_user, job_id)
 
         # Fetch saved chunk to return the audio URL
         chunk = db.query(AudioChunk).filter_by(
@@ -625,17 +965,28 @@ async def process_live_text(submission: TextSubmission, db: Session = Depends(ge
             "meta": {
                 "saved_to_db": True,
                 "timestamp": datetime.utcnow().isoformat(),
-                "processing_type": "live_transcription_optimized"
+                "processing_type": "live_transcription_optimized",
+                "billing": billing.get_current_billing_summary(db, current_user) if current_user else None,
             }
         }
 
+    except HTTPException:
+        db.rollback()
+        billing.release_usage_event(db, tts_event)
+        raise
     except Exception as e:
+        db.rollback()
+        billing.release_usage_event(db, tts_event, failure_reason=str(e))
         print(f"[Error] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/filter-live-chunk")
-async def filter_live_chunk(submission: TextSubmission):
+async def filter_live_chunk(
+    submission: TextSubmission,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
     """
     Batch instruction extractor.
     Receives a full paragraph of speech (accumulated over a silence window)
@@ -646,10 +997,22 @@ async def filter_live_chunk(submission: TextSubmission):
     limit means the model finishes faster and the HTTP response is smaller).
     """
     raw_output = ""  # declared outside try so except clause can always reference it
+    usage_event = None
+    usage_meta = None
     try:
         raw_text = submission.text.strip()
         if not raw_text or len(raw_text) < 5:
             return {"instructions": []}
+
+        if current_user:
+            usage_event = billing.reserve_usage_event(
+                db,
+                current_user,
+                endpoint="/filter-live-chunk",
+                model="gpt-4o-mini",
+                operation="instruction_filter",
+                estimated_credits=billing.estimate_chat_credits_from_text(raw_text, output_buffer_tokens=120),
+            )
 
         system_prompt = """You are a strict Instruction Extractor.
 
@@ -690,6 +1053,9 @@ Output: []"""
         loop = asyncio.get_event_loop()
         raw_output = await loop.run_in_executor(executor, do_request)
 
+        usage_meta = billing.usage_from_chat_response(response)
+
+        raw_output = response.choices[0].message.content.strip()
         print(f"[filter-live-chunk] Input: {raw_text[:100]}")
         print(f"[filter-live-chunk] Output: {raw_output}")
 
@@ -702,12 +1068,52 @@ Output: []"""
             instructions = []
         instructions = [str(i).strip() for i in instructions if str(i).strip()]
 
+        if usage_event and usage_meta is not None:
+            billing.finalize_usage_event(
+                db,
+                usage_event,
+                actual_credits=billing.credits_for_chat_tokens(usage_meta["total_tokens"]),
+                usage_values=usage_meta,
+                response_metadata={"instruction_count": len(instructions)},
+            )
+
         return {"instructions": instructions}
 
     except json.JSONDecodeError as e:
+        if usage_event and usage_meta is not None:
+            billing.finalize_usage_event(
+                db,
+                usage_event,
+                actual_credits=billing.credits_for_chat_tokens(usage_meta["total_tokens"]),
+                usage_values=usage_meta,
+                response_metadata={"json_parse_error": True},
+            )
         print(f"[filter-live-chunk] JSON parse error: {e} | raw: {raw_output}")
         return {"instructions": []}
+    except HTTPException:
+        db.rollback()
+        if usage_meta is not None:
+            billing.finalize_usage_event(
+                db,
+                usage_event,
+                actual_credits=billing.credits_for_chat_tokens(usage_meta["total_tokens"]),
+                usage_values=usage_meta,
+            )
+        else:
+            billing.release_usage_event(db, usage_event)
+        raise
     except Exception as e:
+        db.rollback()
+        if usage_meta is not None:
+            billing.finalize_usage_event(
+                db,
+                usage_event,
+                actual_credits=billing.credits_for_chat_tokens(usage_meta["total_tokens"]),
+                usage_values=usage_meta,
+                response_metadata={"exception": str(e)},
+            )
+        else:
+            billing.release_usage_event(db, usage_event, failure_reason=str(e))
         print(f"[filter-live-chunk] Error: {str(e)}")
         # PROD FIX: Pass error to frontend so it can backoff and retry without dropping the text buffer!
         raise HTTPException(status_code=500, detail=str(e))

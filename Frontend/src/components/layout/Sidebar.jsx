@@ -20,9 +20,10 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('rehear_token');
-    localStorage.removeItem('rehear_user');
-    if (onLogout) onLogout();
+    if (onLogout) {
+      onLogout();
+    }
+    setIsMobileMenuOpen(false);
   };
 
   return (

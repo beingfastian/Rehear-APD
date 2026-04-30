@@ -12,4 +12,7 @@ redis
 python-multipart
 bcrypt
 python-jose[cryptography]
-dnspython>=2.4.0
+google-auth
+requests
+email-validator
+dnspython
