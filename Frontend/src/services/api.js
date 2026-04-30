@@ -102,6 +102,75 @@ class ApiService {
     return response.json();
   }
 
+  async forgetPassword({ email }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/forget-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to send reset code'));
+    }
+
+    return response.json();
+  }
+
+  async resendResetCode({ email }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/resend-reset-code`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to resend reset code'));
+    }
+
+    return response.json();
+  }
+
+  async verifyResetCode({ email, code }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/verify-reset-code`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, code }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to verify reset code'));
+    }
+
+    return response.json();
+  }
+
+  async resetPassword({ resetToken, email, code, newPassword }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        reset_token: resetToken,
+        email,
+        code,
+        new_password: newPassword,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to reset password'));
+    }
+
+    return response.json();
+  }
+
   /**
    * Upload and analyze audio file
    * Returns instruction-based audio chunks (one per instruction)

@@ -23,7 +23,7 @@ import asyncio
 
 import billing
 import auth_utils
-import email as email_utils
+import mailer as email_utils
 from database import SessionLocal, init_db, get_db, User, AudioJob, Instruction, AudioChunk, PasswordResetCode
 
 # Load environment variables
@@ -66,6 +66,8 @@ executor = ThreadPoolExecutor(max_workers=8)
 JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "15"))
+PASSWORD_RESET_SUCCESS_MESSAGE = "If an account with that email exists, a password reset code has been sent."
 
 
 def hash_password(password: str) -> str:
@@ -87,11 +89,34 @@ def create_token(user_id: int, email: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def create_password_reset_token(user_id: int, email: str, code: str) -> str:
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "code": code,
+        "scope": "password_reset",
+        "exp": datetime.utcnow().timestamp() + PASSWORD_RESET_TOKEN_EXPIRE_MINUTES * 60,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def decode_password_reset_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    if payload.get("scope") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    return payload
 
 
 def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
@@ -129,6 +154,44 @@ def serialize_user(user: User) -> dict:
     }
 
 
+def invalidate_unused_reset_codes(db: Session, user_id: int) -> None:
+    db.query(PasswordResetCode).filter_by(user_id=user_id, used=False).update(
+        {"used": True},
+        synchronize_session=False,
+    )
+
+
+def issue_password_reset_code(db: Session, user: User) -> str:
+    invalidate_unused_reset_codes(db, user.id)
+    code = email_utils.generate_reset_code()
+    db.add(PasswordResetCode(user_id=user.id, code=code))
+    db.commit()
+    return code
+
+
+def get_matching_reset_entry(db: Session, user_id: int, code: str) -> Optional[PasswordResetCode]:
+    return (
+        db.query(PasswordResetCode)
+        .filter_by(user_id=user_id, code=code, used=False)
+        .order_by(PasswordResetCode.created_at.desc())
+        .first()
+    )
+
+
+def require_valid_reset_entry(db: Session, user: User, code: str) -> PasswordResetCode:
+    normalized_code = str(code).strip()
+    reset_entry = get_matching_reset_entry(db, user.id, normalized_code)
+    if not reset_entry:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    if email_utils.is_code_expired(reset_entry.created_at):
+        reset_entry.used = True
+        db.commit()
+        raise HTTPException(status_code=400, detail="Reset code has expired")
+
+    return reset_entry
+
+
 # ============================================================================
 # MODELS
 # ============================================================================
@@ -160,9 +223,19 @@ class GoogleAuthRequest(BaseModel):
     credential: str
 
 
-class ResetPasswordRequest(BaseModel):
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class VerifyResetCodeRequest(BaseModel):
     email: str
     code: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: Optional[str] = None
+    code: Optional[str] = None
+    reset_token: Optional[str] = None
     new_password: str
 
 
@@ -421,43 +494,67 @@ async def auth_login(body: LoginRequest, db: Session = Depends(get_db)):
     return {"token": token, "user": serialize_user(user)}
 
 @app.post('/api/auth/forget-password')
-async def auth_forget_password(body: dict = Body(...), db: Session = Depends(get_db)):
-    email = auth_utils.normalize_email_or_raise(body.get("email"))
+async def auth_forget_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = auth_utils.normalize_email_or_raise(body.email)
     user = db.query(User).filter_by(email=email).first()
     if user and user.auth_provider in (auth_utils.LOCAL_AUTH_PROVIDER, auth_utils.HYBRID_AUTH_PROVIDER):
-        code = email_utils.generate_reset_code()
-        reset = PasswordResetCode(user_id=user.id, code=code)
-        db.add(reset)
-        db.commit()
+        code = issue_password_reset_code(db, user)
         try:
             await asyncio.to_thread(email_utils.send_reset_email, email, code)
         except Exception as exc:
             print(f"[Password Reset] Failed to send email to {email}: {exc}")
     # Always return success to prevent email enumeration
-    return {"message": "If an account with that email exists, a password reset code has been sent."}
+    return {"message": PASSWORD_RESET_SUCCESS_MESSAGE}
 
 
-@app.post("/api/auth/reset-password")
-async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+@app.post('/api/auth/resend-reset-code')
+async def auth_resend_reset_code(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email).first()
+    if user and user.auth_provider in (auth_utils.LOCAL_AUTH_PROVIDER, auth_utils.HYBRID_AUTH_PROVIDER):
+        code = issue_password_reset_code(db, user)
+        try:
+            await asyncio.to_thread(email_utils.send_reset_email, email, code)
+        except Exception as exc:
+            print(f"[Password Reset] Failed to resend email to {email}: {exc}")
+    return {"message": PASSWORD_RESET_SUCCESS_MESSAGE}
+
+
+@app.post('/api/auth/verify-reset-code')
+async def auth_verify_reset_code(body: VerifyResetCodeRequest, db: Session = Depends(get_db)):
     email_addr = auth_utils.normalize_email_or_raise(body.email)
     user = db.query(User).filter_by(email=email_addr).first()
     if not user:
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
 
-    reset_entry = (
-        db.query(PasswordResetCode)
-        .filter_by(user_id=user.id, code=body.code, used=False)
-        .order_by(PasswordResetCode.created_at.desc())
-        .first()
-    )
-    if not reset_entry:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+    reset_entry = require_valid_reset_entry(db, user, body.code)
+    reset_token = create_password_reset_token(user.id, user.email, reset_entry.code)
+    return {
+        "message": "Reset code verified successfully",
+        "reset_token": reset_token,
+    }
 
-    if email_utils.is_code_expired(reset_entry.created_at):
-        raise HTTPException(status_code=400, detail="Reset code has expired")
 
+@app.post("/api/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    if body.reset_token:
+        payload = decode_password_reset_token(body.reset_token)
+        user = db.query(User).filter_by(id=int(payload["sub"]), email=payload["email"]).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        reset_entry = require_valid_reset_entry(db, user, payload["code"])
+    else:
+        if not body.email or not body.code:
+            raise HTTPException(status_code=400, detail="Reset token or email and code are required")
+
+        email_addr = auth_utils.normalize_email_or_raise(body.email)
+        user = db.query(User).filter_by(email=email_addr).first()
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+        reset_entry = require_valid_reset_entry(db, user, body.code)
 
     reset_entry.used = True
     user.hashed_password = hash_password(body.new_password)

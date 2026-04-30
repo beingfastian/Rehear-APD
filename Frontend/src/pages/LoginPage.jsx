@@ -1,14 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, Lock, Mail } from 'lucide-react';
 import GoogleSignInButton from '../components/shared/GoogleSignInButton';
 import { useApp } from '../context/AppContext';
 
-const LoginPage = ({ setCurrentPage }) => {
+const LoginPage = ({ setCurrentPage, pageData = {} }) => {
   const { loginWithPassword, loginWithGoogle, showNotification } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (pageData.email) {
+      setEmail(pageData.email);
+    }
+  }, [pageData.email]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -107,6 +113,13 @@ const LoginPage = ({ setCurrentPage }) => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-sm font-semibold text-gray-700">Password</label>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage('forgot-password')}
+                    className="text-sm font-semibold text-sky-700 hover:text-sky-800"
+                  >
+                    Forgot password?
+                  </button>
                 </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />

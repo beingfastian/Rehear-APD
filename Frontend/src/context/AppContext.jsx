@@ -240,6 +240,22 @@ export const AppProvider = ({ children }) => {
     return data;
   };
 
+  const requestPasswordReset = async ({ email }) => {
+    return apiService.forgetPassword({ email });
+  };
+
+  const resendPasswordResetCode = async ({ email }) => {
+    return apiService.resendResetCode({ email });
+  };
+
+  const verifyPasswordResetCode = async ({ email, code }) => {
+    return apiService.verifyResetCode({ email, code });
+  };
+
+  const resetPassword = async ({ resetToken, email, code, newPassword }) => {
+    return apiService.resetPassword({ resetToken, email, code, newPassword });
+  };
+
   const logout = (message = 'Signed out of this device.') => {
     clearStoredAuthSession();
     setAuthToken(null);
@@ -485,6 +501,10 @@ export const AppProvider = ({ children }) => {
     loginWithPassword,
     signupWithPassword,
     loginWithGoogle,
+    requestPasswordReset,
+    resendPasswordResetCode,
+    verifyPasswordResetCode,
+    resetPassword,
     logout,
   };
 

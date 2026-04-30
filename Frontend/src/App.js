@@ -13,6 +13,11 @@ import SettingsPage from './pages/SettingsPage';
 import SignupPage from './pages/SignupPage';
 import LiveRecordingPage from './pages/LiveRecordingPage';
 import Notification from './components/shared/Notification';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import VerifyResetCodePage from './pages/VerifyResetCodePage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+
+const AUTH_PAGES = ['login', 'signup', 'forgot-password', 'verify-reset-code', 'reset-password'];
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -24,12 +29,12 @@ function AppContent() {
       return;
     }
 
-    if (!isAuthenticated && !['login', 'signup'].includes(currentPage)) {
+    if (!isAuthenticated && !AUTH_PAGES.includes(currentPage)) {
       setCurrentPage('login');
       setPageData({});
     }
 
-    if (isAuthenticated && ['login', 'signup'].includes(currentPage)) {
+    if (isAuthenticated && AUTH_PAGES.includes(currentPage)) {
       setCurrentPage('dashboard');
       setPageData({});
     }
@@ -67,17 +72,33 @@ function AppContent() {
     );
   }
 
-  const isAuthPage = !isAuthenticated || currentPage === 'login' || currentPage === 'signup';
+  const isAuthPage = !isAuthenticated || AUTH_PAGES.includes(currentPage);
+
+  const renderAuthPage = () => {
+    if (currentPage === 'signup') {
+      return <SignupPage setCurrentPage={navigateTo} pageData={pageData} />;
+    }
+
+    if (currentPage === 'forgot-password') {
+      return <ForgotPasswordPage setCurrentPage={navigateTo} pageData={pageData} />;
+    }
+
+    if (currentPage === 'verify-reset-code') {
+      return <VerifyResetCodePage setCurrentPage={navigateTo} pageData={pageData} />;
+    }
+
+    if (currentPage === 'reset-password') {
+      return <ResetPasswordPage setCurrentPage={navigateTo} pageData={pageData} />;
+    }
+
+    return <LoginPage setCurrentPage={navigateTo} pageData={pageData} />;
+  };
 
   return (
     <>
       {isAuthPage ? (
         <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.18),_transparent_28%),linear-gradient(135deg,_#f8fbff_0%,_#eef6ff_45%,_#f9fbff_100%)]">
-          {currentPage === 'signup' ? (
-            <SignupPage setCurrentPage={navigateTo} />
-          ) : (
-            <LoginPage setCurrentPage={navigateTo} />
-          )}
+          {renderAuthPage()}
         </div>
       ) : (
         <div className="flex h-screen bg-sky-50 overflow-hidden">
