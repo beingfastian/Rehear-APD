@@ -150,6 +150,7 @@ function AppContent({ onLogout }) {
                 <LiveRecordingPage
                   recordingName={pageData.recordingName || 'New Recording'}
                   setCurrentPage={navigateTo}
+                  onLogout={handleLogout}
                 />
               )}
             </div>

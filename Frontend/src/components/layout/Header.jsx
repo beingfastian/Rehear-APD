@@ -67,21 +67,8 @@ const Header = ({ onLogout }) => {
         </div>
       </div>
 
-      {/* Right: notification + user */}
+      {/* Right: user only (bell removed) */}
       <div className="flex items-center" style={{ gap: '18px' }}>
-        {/* Notification bell */}
-        <div style={{ position: 'relative' }}>
-          <div className="flex items-center justify-center" style={{ backgroundColor: '#f3f1fd', borderRadius: '50%', width: '38px', height: '38px' }}>
-            <img src={imgVuesaxBoldNotification} alt="notifications" style={{ width: '18px', height: '18px' }} />
-          </div>
-          <div
-            className="absolute flex items-center justify-center"
-            style={{ top: 0, right: 0, backgroundColor: '#fb4248', borderRadius: '50%', width: '14px', height: '14px', transform: 'translate(20%, -20%)' }}
-          >
-            <span className="font-bold text-white" style={{ fontSize: '8px' }}>4</span>
-          </div>
-        </div>
-
         {/* User */}
         <div style={{ position: 'relative' }} ref={dropdownRef}>
           <button

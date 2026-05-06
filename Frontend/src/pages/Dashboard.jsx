@@ -12,39 +12,86 @@ const imgExport = "https://www.figma.com/api/mcp/asset/d455f941-f7b0-4c04-a652-e
 /* ── Name Recording Modal ─────────────────────────────────────────────────── */
 const NameRecordingModal = ({ onConfirm, onClose }) => {
   const [name, setName] = useState('');
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-8 animate-modal-in">
-        <button onClick={onClose} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+
+      {/* Modal */}
+      <div
+        className="relative bg-white w-full max-w-lg mx-4 p-8 animate-modal-in"
+        style={{ borderRadius: '24px', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}
+      >
+        {/* Close — top-right, outside content flow */}
+        <button
+          onClick={onClose}
+          className="absolute text-slate-400 hover:text-slate-600 hover:bg-gray-100 rounded-lg transition-colors"
+          style={{ top: '16px', right: '16px', padding: '6px' }}
+        >
           <X className="w-5 h-5" />
         </button>
-        <h2 className="text-2xl font-bold mb-1.5" style={{ fontFamily: 'Urbanist, sans-serif', color: '#343434' }}>Name Your Session</h2>
-        <p className="text-sm mb-6" style={{ fontFamily: 'Urbanist, sans-serif', color: '#6a7380' }}>Choose a name to keep your recordings organized.</p>
-        <label className="block text-sm font-semibold mb-2" style={{ fontFamily: 'Urbanist, sans-serif', color: '#343434' }}>Session Name</label>
+
+        {/* Header — centered, no border */}
+        <div className="text-center mb-6 px-4 pt-2">
+          <h2
+            className="text-3xl font-bold mb-2"
+            style={{ fontFamily: 'Urbanist, Inter, sans-serif', color: '#1a1a2e' }}
+          >
+            Session Identification
+          </h2>
+          <p
+            className="text-sm leading-relaxed"
+            style={{ fontFamily: 'Urbanist, Inter, sans-serif', color: '#6a7380' }}
+          >
+            Assign a name to your lesson or training session for automated organization.
+          </p>
+        </div>
+
+        {/* Label */}
+        <label
+          className="block text-sm font-bold mb-2"
+          style={{ fontFamily: 'Urbanist, Inter, sans-serif', color: '#343434' }}
+        >
+          Lesson Name
+        </label>
+
+        {/* Pill input */}
         <input
           autoFocus
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && name.trim() && onConfirm(name.trim())}
-          placeholder="Enter your session name..."
-          className="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all mb-5"
-          style={{ border: '1px solid #c1c1c8', fontFamily: 'Urbanist, sans-serif' }}
+          placeholder="Enter lesson name..."
+          className="w-full px-5 py-3.5 text-sm outline-none transition-all mb-5"
+          style={{
+            border: '1px solid #c1c1c8',
+            borderRadius: '999px',
+            fontFamily: 'Urbanist, Inter, sans-serif',
+            color: '#343434',
+          }}
         />
+
+        {/* Gradient pill button */}
         <button
           onClick={() => name.trim() && onConfirm(name.trim())}
           disabled={!name.trim()}
-          className="w-full py-3.5 text-white font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-          style={{ fontFamily: 'Urbanist, sans-serif', borderRadius: '48px', background: 'linear-gradient(104deg, #57a0ef 1.33%, #98d3ff 127.72%)', border: 'none', cursor: 'pointer' }}
+          className="w-full py-3.5 text-white font-semibold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            fontFamily: 'Urbanist, Inter, sans-serif',
+            borderRadius: '999px',
+            background: 'linear-gradient(104deg, #57a0ef 1.33%, #98d3ff 127.72%)',
+            border: 'none',
+            fontSize: '15px',
+          }}
         >
-          Start Live Session
+          Initialize Assistant
         </button>
       </div>
     </div>
   );
 };
-
 /* ── Dashboard ────────────────────────────────────────────────────────────── */
 const Dashboard = ({ setCurrentPage }) => {
   const { jobs, isLoadingJobs } = useApp();
