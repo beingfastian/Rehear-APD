@@ -1,71 +1,57 @@
-// Frontend/src/pages/Dashboard.jsx
-
 import React, { useState, useEffect } from 'react';
-import { FileText, Upload, X, Loader2, CheckCircle, XCircle, Mic } from 'lucide-react';
+import { X, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
 import RecentActivityTable from '../components/dashboard/RecentActivityTable';
 import FileUpload from '../components/shared/FileUpload';
 
-// ── Name Recording Modal ──────────────────────────────────────────────────────
+const imgGroup  = "https://www.figma.com/api/mcp/asset/6ff58e1f-4acd-494e-a153-502213432598";
+const imgGroup1 = "https://www.figma.com/api/mcp/asset/0683a4ef-85c9-4041-ba52-7a9e7d9874ef";
+const imgExport = "https://www.figma.com/api/mcp/asset/d455f941-f7b0-4c04-a652-edca66033ca1";
+
+/* ── Name Recording Modal ─────────────────────────────────────────────────── */
 const NameRecordingModal = ({ onConfirm, onClose }) => {
   const [name, setName] = useState('');
-
-  const handleStart = () => {
-    if (!name.trim()) return;
-    onConfirm(name.trim());
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Modal */}
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-8 animate-modal-in">
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-        >
+        <button onClick={onClose} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
           <X className="w-5 h-5" />
         </button>
-
-        <h2 className="text-2xl font-bold text-slate-900 mb-1.5">Name Your Recording</h2>
-        <p className="text-sm text-slate-500 mb-6">Choose a name to keep your recordings organized.</p>
-
-        <label className="block text-sm font-semibold text-slate-700 mb-2">Recording Name</label>
+        <h2 className="text-2xl font-bold mb-1.5" style={{ fontFamily: 'Urbanist, sans-serif', color: '#343434' }}>Name Your Session</h2>
+        <p className="text-sm mb-6" style={{ fontFamily: 'Urbanist, sans-serif', color: '#6a7380' }}>Choose a name to keep your recordings organized.</p>
+        <label className="block text-sm font-semibold mb-2" style={{ fontFamily: 'Urbanist, sans-serif', color: '#343434' }}>Session Name</label>
         <input
           autoFocus
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleStart()}
-          placeholder="Enter recording name..."
-          className="w-full px-4 py-3 border border-sky-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all mb-5"
+          onKeyDown={(e) => e.key === 'Enter' && name.trim() && onConfirm(name.trim())}
+          placeholder="Enter your session name..."
+          className="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all mb-5"
+          style={{ border: '1px solid #c1c1c8', fontFamily: 'Urbanist, sans-serif' }}
         />
-
         <button
-          onClick={handleStart}
+          onClick={() => name.trim() && onConfirm(name.trim())}
           disabled={!name.trim()}
-          className="w-full py-3.5 bg-gradient-to-r from-sky-500 to-sky-700 text-white rounded-2xl font-semibold text-sm
-                     hover:from-sky-600 hover:to-sky-700 disabled:opacity-40 disabled:cursor-not-allowed
-                     transition-all shadow-md shadow-sky-200"
+          className="w-full py-3.5 text-white font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          style={{ fontFamily: 'Urbanist, sans-serif', borderRadius: '48px', background: 'linear-gradient(104deg, #57a0ef 1.33%, #98d3ff 127.72%)', border: 'none', cursor: 'pointer' }}
         >
-          Start Recording
+          Start Live Session
         </button>
       </div>
     </div>
   );
 };
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
+/* ── Dashboard ────────────────────────────────────────────────────────────── */
 const Dashboard = ({ setCurrentPage }) => {
   const { jobs, isLoadingJobs } = useApp();
   const [showNameModal, setShowNameModal] = useState(false);
   const [backendStatus, setBackendStatus] = useState('checking');
 
-  const recentActivity = jobs.slice(0, 10);
+  const recentActivity = jobs.slice(0, 50);
 
   useEffect(() => {
     apiService.checkHealth()
@@ -81,107 +67,133 @@ const Dashboard = ({ setCurrentPage }) => {
   const handleUploadSuccess = () => setCurrentPage('segment');
 
   return (
-    <div className="p-6 max-w-screen-xl mx-auto">
-      {/* Page title row */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard Overview</h1>
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${
-          backendStatus === 'online'   ? 'bg-green-50 text-green-600 border border-green-100'
-          : backendStatus === 'offline' ? 'bg-red-50 text-red-600 border border-red-100'
-          : 'bg-sky-50 text-slate-500 border border-sky-100'
-        }`}>
-          {backendStatus === 'online'   && <><CheckCircle className="w-3 h-3" /> API Online</>}
-          {backendStatus === 'offline'  && <><XCircle className="w-3 h-3" /> API Offline</>}
-          {backendStatus === 'checking' && <><Loader2 className="w-3 h-3 animate-spin" /> Checking...</>}
-        </div>
-      </div>
+    <div className="min-h-full" style={{ padding: '40px', backgroundColor: '#f6f6f9', fontFamily: 'Urbanist, sans-serif' }}>
 
-      {/* ── Card row ── */}
-      {/* Live Listen — full width */}
-      <div className="bg-white rounded-2xl border border-sky-100 shadow-sm p-8 mb-4 text-center">
-        <div className="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-          {/* Concentric circle mic icon */}
-          <div className="relative flex items-center justify-center">
-            <div className="w-12 h-12 rounded-full border-2 border-sky-100 absolute" />
-            <div className="w-8 h-8 rounded-full border-2 border-gray-300 absolute" />
-            <div className="w-5 h-5 rounded-full bg-gray-800 flex items-center justify-center">
-              <Mic className="w-3 h-3 text-white" />
-            </div>
-          </div>
-        </div>
-        <h2 className="text-lg font-bold text-slate-900 mb-1.5">Live Listen</h2>
-        <p className="text-sm text-slate-500 mb-5">Capture audio directly from your browser or mic.</p>
-        <button
-          onClick={() => setShowNameModal(true)}
-          className="px-8 py-3 bg-gradient-to-r from-sky-500 to-sky-700 text-white rounded-2xl font-semibold text-sm
-                     hover:from-sky-600 hover:to-sky-700 transition-all shadow-md shadow-sky-200"
+      {/* Page title */}
+      <div className="flex items-center justify-between" style={{ marginBottom: '43px' }}>
+        <h1 className="font-bold whitespace-nowrap" style={{ fontSize: '34px', color: '#343434', lineHeight: 1.3 }}>
+          Learning Hub Overview
+        </h1>
+        <div
+          className="flex items-center gap-2 font-semibold"
+          style={{
+            padding: '6px 12px',
+            borderRadius: '999px',
+            fontSize: '12px',
+            backgroundColor: backendStatus === 'online' ? '#f1fdfb' : backendStatus === 'offline' ? '#fff0f0' : '#f6f6f9',
+            color:           backendStatus === 'online' ? '#129578' : backendStatus === 'offline' ? '#fb4248' : '#6a7380',
+            border: `1px solid ${backendStatus === 'online' ? '#129578' : backendStatus === 'offline' ? '#fb4248' : '#c1c1c8'}`,
+          }}
         >
-          Start Recording
-        </button>
+          {backendStatus === 'online'   && <><CheckCircle style={{ width: 12, height: 12 }} /> API Online</>}
+          {backendStatus === 'offline'  && <><XCircle    style={{ width: 12, height: 12 }} /> API Offline</>}
+          {backendStatus === 'checking' && <><Loader2    style={{ width: 12, height: 12 }} className="animate-spin" /> Checking...</>}
+        </div>
       </div>
 
-      {/* Two cards side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {/* Instructional Chunks */}
-        <div className="bg-white rounded-2xl border border-sky-100 shadow-sm p-8 text-center">
-          <div className="w-11 h-11 mx-auto mb-4 bg-sky-50 rounded-full flex items-center justify-center">
-            <FileText className="w-5 h-5 text-slate-500" />
+      <div className="flex flex-col" style={{ gap: '24px' }}>
+
+        {/* Smart Lesson Capture — full width */}
+        <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
+          <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <img src={imgGroup} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
-          <h3 className="font-bold text-slate-900 mb-2">Instructional Chunks</h3>
-          <p className="text-sm text-slate-500 mb-5">
-            View logical steps and segments generated via AI-driven sentence arrays.
+          <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Smart Lesson Capture</p>
+          <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', maxWidth: '600px', lineHeight: 'normal' }}>
+            AI-driven listening: Automatically identifies instructional steps and sequences in real-time.
           </p>
           <button
-            onClick={() => setCurrentPage('media')}
-            className="px-6 py-2.5 border border-sky-200 rounded-2xl text-sm font-medium text-slate-700 hover:bg-sky-50 transition-colors"
+            onClick={() => setShowNameModal(true)}
+            className="flex items-center justify-center font-semibold text-white"
+            style={{
+              height: '56px', width: '283px', borderRadius: '48px', fontSize: '16px',
+              fontFamily: 'Urbanist, sans-serif',
+              border: '1px solid #f6ee08',
+              background: 'linear-gradient(104deg, #57a0ef 1.33%, #98d3ff 127.72%)',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
           >
-            View Chunks
+            Begin Session
           </button>
         </div>
 
-        {/* Upload Audio */}
-        <div className="bg-white rounded-2xl border border-sky-100 shadow-sm p-8 text-center">
-          <div className="w-11 h-11 mx-auto mb-4 bg-sky-50 rounded-full flex items-center justify-center">
-            <Upload className="w-5 h-5 text-slate-500" />
+        {/* Two side-by-side cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2" style={{ gap: '32px', padding: '0 10px' }}>
+
+          {/* Instructional Chunks */}
+          <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
+            <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img src={imgGroup1} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
+            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Instructional Chunks</p>
+            <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', lineHeight: 'normal' }}>
+              View logical steps and segments generated via AI-driven sentence arrays.
+            </p>
+            <button
+              onClick={() => setCurrentPage('media')}
+              className="flex items-center justify-center font-semibold"
+              style={{
+                height: '56px', width: '230px', borderRadius: '48px', fontSize: '16px',
+                fontFamily: 'Urbanist, sans-serif', color: '#242424',
+                border: '1px solid #1674cc', backgroundColor: 'transparent', cursor: 'pointer',
+              }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f3f1fd'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            >
+              View Chunks
+            </button>
           </div>
-          <h3 className="font-bold text-slate-900 mb-2">Upload Audio</h3>
-          <p className="text-sm text-slate-500 mb-5">
-            Support for MP3, WAV, and MP4 files up to 500MB.
-          </p>
-          <FileUpload onSuccess={handleUploadSuccess} />
+
+          {/* Upload Audio */}
+          <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
+            <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img src={imgExport} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
+            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Upload Audio</p>
+            <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', lineHeight: 'normal' }}>
+              Support for MP3, WAV, and MP4 files up to 500MB.
+            </p>
+            <FileUpload
+              onSuccess={handleUploadSuccess}
+              customButton={
+                <button
+                  className="flex items-center justify-center font-semibold"
+                  style={{
+                    height: '56px', width: '230px', borderRadius: '48px', fontSize: '16px',
+                    fontFamily: 'Urbanist, sans-serif', color: '#242424',
+                    border: '1px solid #1674cc', backgroundColor: 'transparent', cursor: 'pointer',
+                  }}
+                >
+                  Upload Files +
+                </button>
+              }
+            />
+          </div>
+        </div>
+
+        {/* Recent Activity */}
+        <div style={{ backgroundColor: 'white', border: '1px solid #c1c1c8', borderRadius: '20px', overflow: 'hidden' }}>
+          {isLoadingJobs ? (
+            <div className="py-12 text-center">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3" style={{ color: '#1674cc' }} />
+              <p style={{ fontSize: '14px', color: '#6a7380' }}>Loading from database…</p>
+            </div>
+          ) : recentActivity.length > 0 ? (
+            <RecentActivityTable data={recentActivity} setCurrentPage={setCurrentPage} />
+          ) : (
+            <div className="text-center" style={{ padding: '48px 24px' }}>
+              <p className="font-bold mb-2" style={{ fontSize: '24px', color: '#222132' }}>Recent activity</p>
+              <p className="mb-6" style={{ fontSize: '14px', color: '#6a7380' }}>No recordings yet. Upload your first audio file!</p>
+              <FileUpload onSuccess={handleUploadSuccess} />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Recent Activity */}
-      <div className="bg-white rounded-2xl border border-sky-100 shadow-sm">
-        <div className="px-6 py-4 border-b border-sky-100 flex items-center justify-between">
-          <h3 className="font-bold text-slate-900">
-            Recent activity
-            {isLoadingJobs && <Loader2 className="inline w-4 h-4 animate-spin ml-2 text-slate-400" />}
-          </h3>
-        </div>
-
-        {isLoadingJobs ? (
-          <div className="py-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin text-sky-500 mx-auto mb-3" />
-            <p className="text-sm text-slate-400">Loading from database…</p>
-          </div>
-        ) : recentActivity.length > 0 ? (
-          <RecentActivityTable data={recentActivity} setCurrentPage={setCurrentPage} />
-        ) : (
-          <div className="py-12 text-center">
-            <p className="text-sm text-slate-400 mb-4">No recordings yet. Upload your first audio file!</p>
-            <FileUpload onSuccess={handleUploadSuccess} />
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
       {showNameModal && (
-        <NameRecordingModal
-          onConfirm={handleStartRecording}
-          onClose={() => setShowNameModal(false)}
-        />
+        <NameRecordingModal onConfirm={handleStartRecording} onClose={() => setShowNameModal(false)} />
       )}
     </div>
   );

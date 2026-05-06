@@ -16,6 +16,9 @@ import Notification from './components/shared/Notification';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import VerifyResetCodePage from './pages/VerifyResetCodePage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import AuthPage from './pages/AuthPage';
+
+const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:10000';
 
 const AUTH_PAGES = ['login', 'signup', 'forgot-password', 'verify-reset-code', 'reset-password'];
 
@@ -75,7 +78,7 @@ function AppContent({ onLogout }) {
       <div className="min-h-screen bg-sky-50 flex items-center justify-center px-6">
         <div className="bg-white rounded-3xl shadow-sm border border-sky-100 px-10 py-12 text-center max-w-md w-full">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center mb-4">
-            <img src="/APD LOGO.png" alt="APD Tool" className="h-8 w-auto object-contain" />
+            <img src="/rehear-logo.png" alt="Rehear APD" className="h-8 w-auto object-contain" onError={e => { e.target.src = '/rehear-logo.png'; }} />
           </div>
           <h1 className="text-xl font-bold text-gray-900">Restoring your session</h1>
           <p className="text-sm text-gray-500 mt-2">Checking your account state before loading the workspace.</p>
@@ -121,11 +124,11 @@ function AppContent({ onLogout }) {
           {renderAuthPage()}
         </div>
       ) : (
-        <div className="flex h-screen bg-sky-50 overflow-hidden">
-          <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} onLogout={handleLogout} />
+        <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#f6f6f9' }}>
+          <Header />
 
-          <div className="flex-1 flex flex-col min-w-0">
-            <Header />
+          <div className="flex flex-1 overflow-hidden">
+          <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} onLogout={handleLogout} />
 
             <div className="flex-1 overflow-auto">
               {currentPage === 'dashboard' && (
@@ -230,10 +233,10 @@ function App() {
       <div className="min-h-screen bg-sky-50 flex items-center justify-center">
         <div className="text-center">
           <img
-            src="/APD LOGO.png"
-            alt="APD Rehear"
+            src="/rehear-logo.png"
+            alt="Rehear APD"
             className="h-20 w-auto object-contain mx-auto mb-4"
-            onError={e => { e.target.style.display = 'none'; }}
+            onError={e => { e.target.src = '/rehear-logo.png'; }}
           />
           <div className="w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto" />
         </div>

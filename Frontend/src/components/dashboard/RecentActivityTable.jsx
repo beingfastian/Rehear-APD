@@ -1,61 +1,114 @@
-// Frontend/src/components/dashboard/RecentActivityTable.jsx
-
-import React from 'react';
-import { ChevronDown, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+
+const imgArrowUp              = "https://www.figma.com/api/mcp/asset/ca4dae79-ed26-4b25-b89a-a3a91f97e14b";
+const imgVuesaxOutlineMoreSq  = "https://www.figma.com/api/mcp/asset/6a8cc17f-d04b-45bd-9159-2c9e48f49a3f";
+const imgVuesaxBoldArrowDown  = "https://www.figma.com/api/mcp/asset/2c000eab-5a5c-4438-bd50-578d8028eb62";
+const imgVuesaxBoldArrowLeft  = "https://www.figma.com/api/mcp/asset/c1f5f49b-afc1-4f37-8bb1-d159bb11e959";
+const imgVuesaxBoldArrowRight = "https://www.figma.com/api/mcp/asset/b68c359b-75b8-4a52-9f6f-276e7c3dbe12";
+const imgEllipse1             = "https://www.figma.com/api/mcp/asset/2c1c8db9-4d7f-4802-aea9-480734fbac15";
+const imgVuesaxOutlineFilter  = "https://www.figma.com/api/mcp/asset/9e8504de-12ba-4d2a-abf3-d252551db5c1";
+const imgVuesaxOutlineSetting5= "https://www.figma.com/api/mcp/asset/2682a574-44d2-4e40-a42f-8b2390ea8a5b";
+
+const ROWS_PER_PAGE = 10;
+
+const StatusBadge = ({ status }) => {
+  const completed = status === 'Completed';
+  return (
+    <span
+      className="inline-flex items-center whitespace-nowrap font-semibold"
+      style={{
+        fontFamily: 'Urbanist, sans-serif',
+        fontSize: '12px',
+        lineHeight: 1.3,
+        padding: '8px 12px',
+        borderRadius: '12px',
+        backgroundColor: completed ? '#f1fdfb' : '#fff5e6',
+        color: completed ? '#129578' : '#fdb345',
+      }}
+    >
+      {completed ? 'Completed' : (status || 'Analyzing Logic...')}
+    </span>
+  );
+};
 
 const RecentActivityTable = ({ data, setCurrentPage }) => {
   const { setCurrentJob } = useApp();
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(data.length / ROWS_PER_PAGE));
+  const pageData = data.slice((page - 1) * ROWS_PER_PAGE, page * ROWS_PER_PAGE);
 
   const handleRowClick = async (item) => {
     await setCurrentJob(item);
     setCurrentPage('segment');
   };
 
-  const columns = ['File Name & Format', 'Processing Type', 'Duration', 'Status', 'Action'];
-
   return (
-    <>
-      {/* Desktop */}
+    <div style={{ fontFamily: 'Urbanist, sans-serif' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between" style={{ padding: '24px 24px 10px 24px' }}>
+        <p className="font-bold" style={{ fontSize: '24px', color: '#222132', lineHeight: 1.3 }}>Recent activity</p>
+        <div className="flex items-center" style={{ gap: '24px' }}>
+          <button className="flex items-center justify-center" style={{ backgroundColor: '#f6f6f9', border: '1px solid #c1c1c8', borderRadius: '12px', padding: '16px' }}>
+            <img src={imgVuesaxOutlineFilter} alt="filter" style={{ width: '24px', height: '24px' }} />
+          </button>
+          <button className="flex items-center justify-center" style={{ backgroundColor: '#f6f6f9', border: '1px solid #c1c1c8', borderRadius: '12px', padding: '16px' }}>
+            <img src={imgVuesaxOutlineSetting5} alt="settings" style={{ width: '24px', height: '24px' }} />
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop table */}
       <div className="hidden md:block overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-slate-50/60">
-            <tr>
-              {columns.map((col) => (
-                <th key={col} className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  <span className="inline-flex items-center gap-1">
-                    {col}
-                    {col !== 'Action' && <ChevronDown className="w-3 h-3" />}
+          <thead>
+            <tr style={{ borderBottom: '1px solid #c1c1c8' }}>
+              {[
+                { label: 'File Name & Format' },
+                { label: 'Segmentation Logic' },
+                { label: 'Duration' },
+                { label: 'AI Pipeline State' },
+                { label: 'Action', align: 'right' },
+              ].map((col) => (
+                <th key={col.label} style={{ padding: '8px', height: '64px', textAlign: col.align || 'left' }}>
+                  <span className="inline-flex items-center font-bold whitespace-nowrap" style={{ gap: '8px', fontSize: '16px', color: '#343434', lineHeight: 1.3 }}>
+                    {col.label}
+                    {col.label !== 'Action' && <img src={imgArrowUp} alt="" style={{ width: '16px', height: '16px' }} />}
                   </span>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
-            {data.map((item) => (
+          <tbody>
+            {pageData.map((item) => (
               <tr
                 key={item.id}
                 onClick={() => handleRowClick(item)}
-                className="hover:bg-slate-50/70 cursor-pointer transition-colors"
+                className="cursor-pointer transition-colors"
+                style={{ borderBottom: '1px solid #c1c1c8' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f6f6f9'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
               >
-                <td className="px-6 py-4 text-sm font-medium text-slate-800">{item.name}</td>
-                <td className="px-6 py-4 text-sm text-slate-500">{item.type}</td>
-                <td className="px-6 py-4 text-sm text-slate-500">{item.duration}</td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
-                    item.status === 'Completed'
-                      ? 'bg-green-50 text-green-600'
-                      : 'bg-orange-50 text-orange-500'
-                  }`}>
-                    {item.status}
-                  </span>
+                <td style={{ padding: '0 8px', height: '50px' }}>
+                  <div className="flex items-center" style={{ gap: '8px' }}>
+                    <img src={imgEllipse1} alt="" style={{ width: '24px', height: '24px', flexShrink: 0 }} />
+                    <span className="font-semibold whitespace-nowrap" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '16px', color: '#232323' }}>
+                      {item.name}
+                    </span>
+                  </div>
                 </td>
-                <td className="px-6 py-4">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleRowClick(item); }}
-                    className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                  >
-                    <MoreHorizontal className="w-4 h-4" />
+                <td style={{ padding: '0 8px', height: '50px' }}>
+                  <span style={{ fontSize: '14px', color: '#343434' }}>{item.type || 'Full Transcription'}</span>
+                </td>
+                <td style={{ padding: '0 8px', height: '50px' }}>
+                  <span style={{ fontSize: '14px', color: '#343434' }}>{item.duration || '—'}</span>
+                </td>
+                <td style={{ padding: '0 8px', height: '50px' }}>
+                  <StatusBadge status={item.status} />
+                </td>
+                <td style={{ padding: '0 8px', height: '50px', textAlign: 'right' }}>
+                  <button onClick={(e) => { e.stopPropagation(); handleRowClick(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <img src={imgVuesaxOutlineMoreSq} alt="more" style={{ width: '24px', height: '24px' }} />
                   </button>
                 </td>
               </tr>
@@ -65,54 +118,62 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
       </div>
 
       {/* Mobile */}
-      <div className="md:hidden divide-y divide-slate-100">
-        {data.map((item) => (
+      <div className="md:hidden" style={{ borderTop: '1px solid #c1c1c8' }}>
+        {pageData.map((item) => (
           <div
             key={item.id}
             onClick={() => handleRowClick(item)}
-            className="p-4 hover:bg-gray-50 cursor-pointer"
+            className="cursor-pointer p-4"
+            style={{ borderBottom: '1px solid #c1c1c8' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f6f6f9'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div className="flex items-start justify-between mb-1">
-              <span className="font-medium text-sm text-slate-800 truncate flex-1">{item.name}</span>
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                item.status === 'Completed' ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-500'
-              }`}>{item.status}</span>
+              <span className="font-semibold text-sm truncate flex-1" style={{ color: '#232323', fontFamily: 'DM Sans, sans-serif' }}>{item.name}</span>
+              <StatusBadge status={item.status} />
             </div>
-            <p className="text-xs text-gray-400">{item.type} · {item.duration}</p>
+            <p style={{ fontSize: '12px', color: '#6a7380' }}>{item.type} · {item.duration}</p>
           </div>
         ))}
       </div>
 
-      {/* Pagination row */}
-      {data.length > 10 && (
-        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <span>Rows per page</span>
-            <span className="inline-flex items-center gap-1 font-medium text-gray-700">
-              10 <ChevronDown className="w-3 h-3" />
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            {[1, 2, 3].map(p => (
+      {/* Pagination */}
+      <div className="flex items-center justify-between" style={{ padding: '8px 0' }}>
+        <div className="flex items-center" style={{ gap: '12px', backgroundColor: 'white', borderRadius: '360px', padding: '16px 20px' }}>
+          <span style={{ fontFamily: 'Urbanist, sans-serif', fontSize: '14px', color: '#232324', letterSpacing: '0.25px' }}>Rows per page</span>
+          <span style={{ fontSize: '16px', color: '#232324' }}>{ROWS_PER_PAGE}</span>
+          <img src={imgVuesaxBoldArrowDown} alt="" style={{ width: '24px', height: '24px' }} />
+        </div>
+        <div className="flex items-center" style={{ gap: '12px', padding: '12px' }}>
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} className="flex items-center justify-center" style={{ border: '1px solid #c1c1c8', borderRadius: '8px', padding: '8px', background: 'none', cursor: 'pointer' }}>
+            <img src={imgVuesaxBoldArrowLeft} alt="prev" style={{ width: '16px', height: '16px' }} />
+          </button>
+          <div className="flex items-center" style={{ gap: '4px' }}>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
               <button
                 key={p}
-                className={`w-8 h-8 rounded-lg text-sm font-medium ${
-                  p === 1 ? 'bg-sky-500 text-white' : 'text-slate-500 hover:bg-gray-100'
-                }`}
+                onClick={() => setPage(p)}
+                className="flex items-center justify-center font-medium"
+                style={{
+                  width: '32px', height: '32px',
+                  borderRadius: p === page ? '8px' : '24px',
+                  fontSize: '14px',
+                  backgroundColor: p === page ? '#71bafe' : 'transparent',
+                  color: p === page ? '#fff' : '#232324',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
               >
                 {p}
               </button>
             ))}
-            <button className="p-1.5 text-gray-400 hover:text-gray-700 rounded">
-              <ChevronRight className="w-4 h-4" />
-            </button>
           </div>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="flex items-center justify-center" style={{ border: '1px solid #c1c1c8', borderRadius: '8px', padding: '8px', background: 'none', cursor: 'pointer' }}>
+            <img src={imgVuesaxBoldArrowRight} alt="next" style={{ width: '16px', height: '16px' }} />
+          </button>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 };
 

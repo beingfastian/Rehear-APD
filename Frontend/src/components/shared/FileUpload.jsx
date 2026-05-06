@@ -4,7 +4,7 @@ import React, { useRef } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
-const FileUpload = ({ onSuccess, label }) => {
+const FileUpload = ({ onSuccess, label, customButton }) => {
   const fileInputRef = useRef(null);
   const { processAudioFile, isProcessing, processingProgress } = useApp();
 
@@ -41,43 +41,51 @@ const FileUpload = ({ onSuccess, label }) => {
         className="hidden"
       />
 
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        disabled={isProcessing}
-        className={`
-          flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all
-          ${isProcessing
-            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            : label
-              ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm shadow-sky-200'
-              : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm shadow-sky-200'
-          }
-        `}
-      >
-        {isProcessing ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>{processingProgress}%</span>
-          </>
-        ) : (
-          <>
-            <Upload className="w-4 h-4" />
-            {label || 'Upload Files +'}
-          </>
-        )}
-      </button>
+      {customButton ? (
+        <div
+          onClick={() => !isProcessing && fileInputRef.current?.click()}
+          style={{ cursor: isProcessing ? 'not-allowed' : 'pointer' }}
+        >
+          {isProcessing ? (
+            <button
+              disabled
+              className="flex items-center justify-center gap-2 font-semibold text-white"
+              style={{
+                height: '56px', width: '230px', borderRadius: '48px', fontSize: '16px',
+                fontFamily: 'Urbanist, sans-serif',
+                background: 'linear-gradient(104deg, #57a0ef 1.33%, #98d3ff 127.72%)',
+                border: 'none', opacity: 0.7, cursor: 'not-allowed',
+              }}
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{processingProgress}%</span>
+            </button>
+          ) : customButton}
+        </div>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isProcessing}
+          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            isProcessing ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm shadow-sky-200'
+          }`}
+        >
+          {isProcessing ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /><span>{processingProgress}%</span></>
+          ) : (
+            <><Upload className="w-4 h-4" />{label || 'Upload Files +'}</>
+          )}
+        </button>
+      )}
 
       {isProcessing && (
-        <div className="mt-3">
-          <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+        <div className="mt-3 w-full max-w-xs">
+          <div className="flex justify-between text-xs mb-1.5" style={{ color: '#6a7380' }}>
             <span>Processing audio…</span>
             <span className="font-semibold">{processingProgress}%</span>
           </div>
-          <div className="w-full bg-gray-100 rounded-full h-1.5">
-            <div
-              className="bg-sky-500 h-1.5 rounded-full transition-all duration-300"
-              style={{ width: `${processingProgress}%` }}
-            />
+          <div className="w-full rounded-full h-1.5" style={{ backgroundColor: '#f6f6f9' }}>
+            <div className="h-1.5 rounded-full transition-all duration-300" style={{ width: `${processingProgress}%`, backgroundColor: '#1674cc' }} />
           </div>
         </div>
       )}

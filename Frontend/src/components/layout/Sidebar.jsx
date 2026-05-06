@@ -1,102 +1,101 @@
-// Frontend/src/components/layout/Sidebar.jsx
-
 import React, { useState } from 'react';
-import { LayoutDashboard, Music2, AlignLeft, Settings, HelpCircle, Menu, X, LogOut } from 'lucide-react';
+
+const imgVuesaxBoldCategory   = "https://www.figma.com/api/mcp/asset/6c2d9bed-6c1f-44e9-8102-b499add80345";
+const imgFrame                = "https://www.figma.com/api/mcp/asset/96adb722-bfda-4946-bdab-ddad5fc93140";
+const imgFrame1               = "https://www.figma.com/api/mcp/asset/4cce977c-f24a-4f9d-b690-59cd14a90960";
+const imgVuesaxOutlineSetting2= "https://www.figma.com/api/mcp/asset/3910f83f-1670-4938-8db7-fb5a745cd82c";
+const imgVuesaxOutlineLampOn  = "https://www.figma.com/api/mcp/asset/af41f78a-f8b6-46df-8672-32a4a6a2edf1";
+const imgFrame2               = "https://www.figma.com/api/mcp/asset/b5acdbff-b3fc-4ac3-aae5-946c3423ce17";
+const imgLayer1               = "https://www.figma.com/api/mcp/asset/cc77b816-3b47-4167-ba11-009824f6fa2d";
+
+const menuItems = [
+  { id: 'dashboard', icon: imgVuesaxBoldCategory,    label: 'Learning Hub' },
+  { id: 'media',     icon: imgFrame,                  label: 'Resource Library' },
+  { id: 'segment',   icon: imgFrame1,                 label: 'Module Editor' },
+  { id: 'settings',  icon: imgVuesaxOutlineSetting2,  label: 'Settings' },
+  { id: 'help',      icon: imgVuesaxOutlineLampOn,     label: 'Help Center' },
+];
 
 const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const menuItems = [
-    { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { id: 'media',     icon: Music2,          label: 'Media Center' },
-    { id: 'segment',   icon: AlignLeft,        label: 'Segment Workspace' },
-    { id: 'settings',  icon: Settings,         label: 'Settings' },
-    { id: 'help',      icon: HelpCircle,       label: 'Help Center' },
-  ];
-
-  const handleNavigation = (page) => {
+  const navigate = (page) => {
     setCurrentPage(page);
-    setIsMobileMenuOpen(false);
-  };
-
-  const handleLogout = () => {
-    if (onLogout) {
-      onLogout();
-    }
-    setIsMobileMenuOpen(false);
+    setMobileOpen(false);
   };
 
   return (
     <>
-      {/* Mobile toggle */}
       <button
-        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        onClick={() => setMobileOpen(!mobileOpen)}
         className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-md"
       >
-        {isMobileMenuOpen ? <X className="w-6 h-6 text-gray-700" /> : <Menu className="w-6 h-6 text-gray-700" />}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M3 12H21M3 6H21M3 18H21" stroke="#343434" strokeWidth="2" strokeLinecap="round" />
+        </svg>
       </button>
 
-      {/* Mobile overlay */}
-      {isMobileMenuOpen && (
-        <div
-          className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-30"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
+      {mobileOpen && (
+        <div className="lg:hidden fixed inset-0 bg-black/50 z-30" onClick={() => setMobileOpen(false)} />
       )}
 
-      {/* Sidebar */}
-      <div className={`
-        fixed lg:static inset-y-0 left-0 z-40
-        w-56 bg-white border-r border-sky-100 h-screen flex flex-col
-        transform transition-transform duration-300 ease-in-out
-        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
-        {/* Logo */}
-        <div className="px-4 py-5 border-b border-sky-100 flex items-center justify-center bg-gradient-to-b from-sky-50 to-white">
-          <img
-            src="/APD LOGO.png"
-            alt="APD Tool"
-            className="h-20 w-auto object-contain"
-          />
+      <div
+        className={`fixed lg:static inset-y-0 left-0 z-40 bg-white h-screen flex flex-col transform transition-transform duration-300
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        style={{ width: '220px', fontFamily: 'Urbanist, sans-serif', flexShrink: 0, borderRight: '1px solid #f0f0f4' }}
+      >
+        {/* Nav */}
+        <div className="flex-1 overflow-y-auto" style={{ position: 'relative' }}>
+          <nav className="flex flex-col" style={{ gap: '4px', paddingLeft: '16px', paddingRight: '16px', paddingTop: '12px' }}>
+            {menuItems.map((item) => {
+              const active = currentPage === item.id;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => navigate(item.id)}
+                  className="relative flex items-center cursor-pointer transition-colors"
+                  style={{
+                    gap: '10px',
+                    padding: '9px 10px',
+                    borderRadius: '8px',
+                    backgroundColor: active ? '#f3f1fd' : 'transparent',
+                  }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = 'rgba(243,241,253,0.5)'; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                >
+                  {active && (
+                    <span style={{
+                      position: 'absolute',
+                      left: '-16px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      width: '3px',
+                      height: '24px',
+                      backgroundColor: '#1674cc',
+                      borderRadius: '0 3px 3px 0',
+                    }} />
+                  )}
+                  <img src={item.icon} alt="" style={{ width: '20px', height: '20px', flexShrink: 0 }} />
+                  <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: active ? '#1674cc' : '#6a7380' }}>
+                    {item.label}
+                  </span>
+                </div>
+              );
+            })}
+          </nav>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {menuItems.map((item) => {
-            const active = currentPage === item.id;
-            return (
-              <div
-                key={item.id}
-                onClick={() => handleNavigation(item.id)}
-                className={`
-                  flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer
-                  transition-all duration-150 group relative
-                  ${active
-                    ? 'bg-sky-50 text-sky-600'
-                    : 'text-slate-500 hover:bg-sky-50 hover:text-sky-700'}
-                `}
-              >
-                {active && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-sky-600 rounded-r-full" />
-                )}
-                <item.icon
-                  className={`flex-shrink-0 ${active ? 'text-sky-600' : 'text-slate-400 group-hover:text-sky-600'}`}
-                  style={{ width: 18, height: 18 }}
-                />
-                <span className={`text-sm font-medium truncate ${active ? 'text-sky-600' : ''}`}>{item.label}</span>
-              </div>
-            );
-          })}
-        </nav>
-
-        {/* Logout */}
-        <div className="px-3 py-4 border-t border-sky-100">
+        {/* Log out */}
+        <div style={{ padding: '0 16px 24px' }}>
           <button
-            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
-            onClick={handleLogout}
+            onClick={onLogout}
+            className="flex items-center w-full transition-colors"
+            style={{ gap: '10px', padding: '9px 10px', borderRadius: '8px', background: 'none', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fff0f0'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
           >
-            <LogOut style={{ width: 18, height: 18 }} className="flex-shrink-0" />
-            <span className="text-sm font-medium">Log out</span>
+            <img src={imgFrame2} alt="" style={{ width: '18px', height: '18px', flexShrink: 0 }} />
+            <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: '#6a7380' }}>Log out</span>
           </button>
         </div>
       </div>

@@ -17,6 +17,9 @@ APD-REHEAR/dist/
 Frontend/build/
 APD-REHEAR/dist/
 
+# Claude
+.claude/
+
 # Misc
 .DS_Store
 *.log
