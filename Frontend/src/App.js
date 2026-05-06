@@ -138,7 +138,7 @@ function AppContent({ onLogout }) {
                 <MediaVault setCurrentPage={navigateTo} />
               )}
               {currentPage === 'segment' && (
-                <SegmentWorkspace />
+                <SegmentWorkspace setCurrentPage={navigateTo} />
               )}
               {currentPage === 'settings' && (
                 <SettingsPage setCurrentPage={navigateTo} />

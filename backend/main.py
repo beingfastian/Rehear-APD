@@ -1015,28 +1015,43 @@ async def filter_live_chunk(
                 estimated_credits=billing.estimate_chat_credits_from_text(raw_text, output_buffer_tokens=120),
             )
 
-        system_prompt = """You are a strict Instruction Extractor.
+        system_prompt = """You are a strict Instruction Extractor for spoken classroom and training sessions.
 
-INPUT: A paragraph of naturally spoken speech. It may mix casual conversation with actionable instructions.
+INPUT: A paragraph of naturally spoken speech. It may mix casual conversation, greetings, filler words, and actionable instructions.
 
 TASK:
-- Read the entire paragraph carefully.
-- Identify every distinct, actionable instruction embedded in the speech.
-- Discard ALL conversational filler: greetings ("hi", "how are you"), questions about people ("how's your job"), pleasantries, and non-actionable statements.
-- For each instruction found, clean it up: fix obvious speech-to-text errors (e.g. "deploy the vacant" → "deploy the backend"), remove filler words ("um", "uh", "also"), and write it as a clear imperative sentence.
-- Preserve specific details: names, times, deadlines, tools, platforms (e.g. "AWS EC2", "PM2", "by tomorrow 5pm").
+1. Identify every DISTINCT, ACTIONABLE instruction — commands the listener must physically do.
+2. SPLIT compound instructions into separate items ("open the book and turn to page 5" → two items).
+3. DISCARD everything that is not an action command:
+   - Greetings: "hello", "hi", "good morning", "hey"
+   - Filler: "okay", "so", "um", "uh", "right", "you know", "basically"
+   - Random words or nonsense: "Aisa laser very bad person", "blah blah"
+   - Questions, explanations, commentary
+   - Emotional statements or reactions
+4. CLEAN each instruction:
+   - Fix speech-to-text errors ("deploy the vacant" → "deploy the backend")
+   - Remove filler words from within the instruction
+   - Write as a clear, concise imperative sentence starting with a verb
+5. Minimum length: each instruction must be at least 4 words long AND contain a clear action verb.
 
 OUTPUT: Return ONLY a valid JSON array of instruction strings. No explanation, no markdown, no extra keys.
+If no valid instructions are found, return: []
 
 EXAMPLES:
-Input: "hi how are you go to class what about your parents well how's your job going I want you to deploy the backend on aws ec2 by tomorrow 5pm also deploy the front via pm2 on same ec2 and give me link for working web application"
-Output: ["Deploy the backend on AWS EC2 by tomorrow 5pm", "Deploy the frontend via PM2 on the same EC2 instance and provide the link to the working web application"]
+Input: "hello open the book close the book okay Aisa laser very bad person"
+Output: ["Open the book", "Close the book"]
+
+Input: "hi how are you go to class what about your parents well I want you to deploy the backend on aws ec2 by tomorrow 5pm also deploy the front via pm2 on same ec2 and give me link for working web application"
+Output: ["Deploy the backend on AWS EC2 by tomorrow 5pm", "Deploy the frontend via PM2 on the same EC2 instance", "Provide the link to the working web application"]
 
 Input: "um hey so basically click the save button and then export as PDF"
 Output: ["Click the save button", "Export as PDF"]
 
-Input: "hi how are you doing today that's great"
-Output: []"""
+Input: "hi how are you doing today that's great okay so yeah"
+Output: []
+
+Input: "turn to page 45 and circle the diagram on the right then highlight the carbon atoms in red"
+Output: ["Turn to page 45", "Circle the diagram on the right", "Highlight the carbon atoms in red"]"""
 
         def do_request():
             res = client.chat.completions.create(
@@ -1045,17 +1060,16 @@ Output: []"""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": raw_text}
                 ],
-                temperature=0.1,
-                max_tokens=800,    # PERF — increased slightly for robust batching
-                timeout=25,        # PERF — increased slightly for larger chunks
+                temperature=0,
+                max_tokens=800,
+                timeout=25,
             )
-            return res.choices[0].message.content.strip()
+            return res  # return full response for usage tracking
 
         loop = asyncio.get_event_loop()
-        raw_output = await loop.run_in_executor(executor, do_request)
+        response = await loop.run_in_executor(executor, do_request)
 
         usage_meta = billing.usage_from_chat_response(response)
-
         raw_output = response.choices[0].message.content.strip()
         print(f"[filter-live-chunk] Input: {raw_text[:100]}")
         print(f"[filter-live-chunk] Output: {raw_output}")
