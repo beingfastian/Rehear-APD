@@ -68,8 +68,8 @@ function AppContent({ onLogout }) {
     setPageData(data);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigateTo('login');
   };
 
@@ -125,7 +125,7 @@ function AppContent({ onLogout }) {
         </div>
       ) : (
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#f6f6f9' }}>
-          <Header />
+          <Header onLogout={handleLogout} />
 
           <div className="flex flex-1 overflow-hidden">
           <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} onLogout={handleLogout} />

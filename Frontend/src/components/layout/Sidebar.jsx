@@ -18,10 +18,20 @@ const menuItems = [
 
 const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const navigate = (page) => {
     setCurrentPage(page);
     setMobileOpen(false);
+  };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      if (onLogout) await onLogout();
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   return (
@@ -88,14 +98,33 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
         {/* Log out */}
         <div style={{ padding: '0 16px 24px' }}>
           <button
-            onClick={onLogout}
+            id="sidebar-logout-btn"
+            onClick={handleLogout}
+            disabled={loggingOut}
             className="flex items-center w-full transition-colors"
-            style={{ gap: '10px', padding: '9px 10px', borderRadius: '8px', background: 'none', border: 'none', cursor: 'pointer' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fff0f0'}
+            style={{
+              gap: '10px',
+              padding: '9px 10px',
+              borderRadius: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: loggingOut ? 'not-allowed' : 'pointer',
+              opacity: loggingOut ? 0.6 : 1,
+            }}
+            onMouseEnter={e => { if (!loggingOut) e.currentTarget.style.backgroundColor = '#fff0f0'; }}
             onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
           >
-            <img src={imgFrame2} alt="" style={{ width: '18px', height: '18px', flexShrink: 0 }} />
-            <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: '#6a7380' }}>Log out</span>
+            {loggingOut ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, animation: 'spin 1s linear infinite' }}>
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                <circle cx="12" cy="12" r="9" stroke="#6a7380" strokeWidth="2" strokeDasharray="42" strokeDashoffset="14" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <img src={imgFrame2} alt="" style={{ width: '18px', height: '18px', flexShrink: 0 }} />
+            )}
+            <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: '#6a7380' }}>
+              {loggingOut ? 'Logging out…' : 'Log out'}
+            </span>
           </button>
         </div>
       </div>
@@ -104,3 +133,4 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
 };
 
 export default Sidebar;
+

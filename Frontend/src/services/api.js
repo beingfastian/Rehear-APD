@@ -102,6 +102,28 @@ class ApiService {
     return response.json();
   }
 
+  /**
+   * Notify the backend of a logout event.
+   * Best-effort: failures are swallowed since the client still clears its session.
+   */
+  async logout() {
+    try {
+      const token = this.getAuthToken();
+      if (!token) return;
+
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (error) {
+      // Silently ignore — logout should always succeed client-side
+      console.warn('[API] Backend logout notification failed:', error.message);
+    }
+  }
+
   async forgetPassword({ email }) {
     const response = await fetch(`${API_BASE_URL}/api/auth/forget-password`, {
       method: 'POST',

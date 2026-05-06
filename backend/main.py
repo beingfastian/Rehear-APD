@@ -590,6 +590,17 @@ async def auth_me(current_user: User = Depends(get_current_user)):
     return {"user": serialize_user(current_user)}
 
 
+@app.post("/api/auth/logout")
+async def auth_logout(current_user: User = Depends(get_current_user)):
+    """
+    Server-side logout endpoint.
+    Since we use stateless JWTs, actual token invalidation happens client-side.
+    This endpoint allows the backend to log the event and perform any cleanup.
+    """
+    print(f"[Auth] User {current_user.email} (id={current_user.id}) logged out")
+    return {"message": "Logged out successfully"}
+
+
 @app.get("/api/billing/plans")
 async def get_billing_plans():
     return {"plans": billing.get_public_plan_catalog()}

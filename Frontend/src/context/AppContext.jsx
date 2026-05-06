@@ -256,7 +256,9 @@ export const AppProvider = ({ children }) => {
     return apiService.resetPassword({ resetToken, email, code, newPassword });
   };
 
-  const logout = (message = 'Signed out of this device.') => {
+  const logout = async (message = 'Signed out of this device.') => {
+    // Notify backend (best-effort, non-blocking)
+    await apiService.logout();
     clearStoredAuthSession();
     setAuthToken(null);
     setAuthUser(null);

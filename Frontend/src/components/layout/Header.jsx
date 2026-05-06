@@ -17,6 +17,7 @@ function getStoredUser() {
 
 const Header = ({ onLogout }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const dropdownRef = useRef(null);
   const user = getStoredUser();
   const displayName = user?.name || 'Shaun co';
@@ -29,10 +30,13 @@ const Header = ({ onLogout }) => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('rehear_token');
-    localStorage.removeItem('rehear_user');
-    if (onLogout) onLogout();
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      if (onLogout) await onLogout();
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   return (
@@ -95,14 +99,68 @@ const Header = ({ onLogout }) => {
           </button>
 
           {dropdownOpen && (
-            <div className="absolute right-0 mt-2 w-44 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50">
-              <div className="px-4 py-2 border-b border-gray-100">
-                <p className="text-sm font-semibold text-gray-800 truncate">{displayName}</p>
-                <p className="text-xs text-gray-400 truncate">{user?.email || ''}</p>
+            <div
+              className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg border border-gray-100 z-50"
+              style={{
+                width: '220px',
+                padding: '0',
+                overflow: 'hidden',
+                animation: 'dropdownFadeIn 0.15s ease-out',
+              }}
+            >
+              <style>{`
+                @keyframes dropdownFadeIn {
+                  from { opacity: 0; transform: translateY(-6px); }
+                  to   { opacity: 1; transform: translateY(0); }
+                }
+              `}</style>
+
+              {/* User info section */}
+              <div style={{ padding: '14px 16px', borderBottom: '1px solid #f0f0f4' }}>
+                <div className="flex items-center" style={{ gap: '10px' }}>
+                  <div
+                    className="rounded-full flex items-center justify-center text-white font-bold select-none"
+                    style={{ width: '36px', height: '36px', backgroundColor: '#1674cc', fontSize: '13px', flexShrink: 0 }}
+                  >
+                    {displayName.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <p className="font-semibold truncate" style={{ fontSize: '13px', color: '#343434', margin: 0 }}>{displayName}</p>
+                    <p className="truncate" style={{ fontSize: '11px', color: '#8f95a0', margin: '2px 0 0' }}>{user?.email || ''}</p>
+                  </div>
+                </div>
               </div>
-              <button onClick={handleLogout} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors">
-                Log out
-              </button>
+
+              {/* Logout button */}
+              <div style={{ padding: '6px 8px' }}>
+                <button
+                  id="header-logout-btn"
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                  className="flex items-center w-full transition-colors"
+                  style={{
+                    gap: '10px',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: loggingOut ? 'not-allowed' : 'pointer',
+                    opacity: loggingOut ? 0.6 : 1,
+                  }}
+                  onMouseEnter={e => { if (!loggingOut) e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  {/* Logout icon */}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M8.9 7.56C9.21 3.96 11.06 2.49 15.11 2.49H15.24C19.71 2.49 21.5 4.28 21.5 8.75V15.27C21.5 19.74 19.71 21.53 15.24 21.53H15.11C11.09 21.53 9.24 20.08 8.91 16.54" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M15 12H3.62" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M5.85 8.65L2.5 12L5.85 15.35" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span className="font-semibold" style={{ fontSize: '13px', color: '#ef4444', lineHeight: 1.3 }}>
+                    {loggingOut ? 'Logging out…' : 'Log out'}
+                  </span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -112,3 +170,4 @@ const Header = ({ onLogout }) => {
 };
 
 export default Header;
+
