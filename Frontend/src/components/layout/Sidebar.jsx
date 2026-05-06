@@ -50,7 +50,7 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
       )}
 
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-40 bg-white h-screen flex flex-col transform transition-transform duration-300
+        className={`fixed lg:static inset-y-0 left-0 z-40 bg-white h-full flex flex-col transform transition-transform duration-300
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
         style={{ width: '220px', fontFamily: 'Urbanist, sans-serif', flexShrink: 0, borderRight: '1px solid #f0f0f4' }}
       >
