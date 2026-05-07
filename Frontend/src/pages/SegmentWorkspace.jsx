@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, Download, Search, Play, Pause,
   Shuffle, SkipBack, SkipForward, Repeat, Loader2, AlertCircle,
+  ListMusic, Volume2, Maximize2, VolumeX, Minimize2
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
@@ -31,8 +32,8 @@ const WaveBars = ({ playing }) => (
       <div key={i}
         className={playing ? 'sw-bar-anim' : ''}
         style={{
-          width:'3px', height:`${h}px`, borderRadius:'2px',
-          backgroundColor:'#94a3b8',
+          width:'2.5px', height:`${h*0.8}px`, borderRadius:'2px',
+          backgroundColor:'#475569',
           animationDuration:`${550+(i*47)%400}ms`,
           animationDelay:`${(i*60)%500}ms`,
         }}
@@ -77,11 +78,40 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
   const [shuffle,     setShuffle]     = useState(false);
   const [repeat,      setRepeat]      = useState(false);
 
+  // New interactive states
+  const [volume,        setVolume]        = useState(1);
+  const [isMuted,       setIsMuted]       = useState(false);
+  const [showList,      setShowList]      = useState(true);
+  const [isFullscreen,  setIsFullscreen]  = useState(false);
+
   const audioRef     = useRef(new Audio());
   const autoPlayRef  = useRef(false);
   const hasPlayedRef = useRef(false);
+  const containerRef = useRef(null);
 
   useEffect(() => { injectFont(); }, []);
+
+  // Update real audio volume when state changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume;
+    }
+  }, [volume, isMuted]);
+
+  // Track fullscreen changes (e.g. if user presses ESC)
+  useEffect(() => {
+    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
 
   /* reset + auto-play when job changes */
   useEffect(() => {
@@ -204,7 +234,7 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
   const progressPct = duration ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div style={{ ...F, display:'flex', flexDirection:'column', height:'100%', backgroundColor:'#f6f7f9', overflow:'hidden' }}>
+    <div ref={containerRef} style={{ ...F, display:'flex', flexDirection:'column', height:'100%', backgroundColor:'#f6f7f9', overflow:'hidden' }}>
 
       {/* ══ TOP BAR ══════════════════════════════════════════════════════════ */}
       <div style={{
@@ -247,14 +277,15 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
       </div>
 
       {/* ══ BODY ═════════════════════════════════════════════════════════════ */}
-      <div style={{ flex:1, display:'flex', gap:'20px', padding:'20px 28px', minHeight:0, overflow:'hidden' }}>
+      <div style={{ flex:1, display:'flex', gap:'20px', padding:'20px 28px', minHeight:0, overflow:'hidden', justifyContent:'center' }}>
 
-        {/* ── LEFT: Instruction Chunks list ────────────────────────────────── */}
-        <div style={{
-          flex:1, minWidth:0, backgroundColor:'#fff',
-          borderRadius:'16px', border:'1px solid #e2e8f0',
-          display:'flex', flexDirection:'column', overflow:'hidden',
-        }}>
+        {/* ── LEFT: Instruction Chunks list (Toggleable) ───────────────────── */}
+        {showList && (
+          <div style={{
+            flex:1, minWidth:0, maxWidth:'600px', backgroundColor:'#fff',
+            borderRadius:'16px', border:'1px solid #e2e8f0',
+            display:'flex', flexDirection:'column', overflow:'hidden',
+          }}>
           {/* Search */}
           <div style={{ padding:'16px 20px', borderBottom:'1px solid #f1f5f9', flexShrink:0 }}>
             <div style={{ position:'relative' }}>
@@ -284,10 +315,6 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
             ) : filtered.map((step, listIdx) => {
               const gIdx   = allSteps.indexOf(step);
               const active = gIdx === stepIdx;
-              /* fake timestamp from index — real recordings don't store per-sentence timestamps */
-              const sec = gIdx * 15;
-              const ts  = `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;
-
               return (
                 <div
                   key={`${step.iIdx}-${step.sIdx}`}
@@ -301,9 +328,9 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
                   }}
                   onClick={() => jumpTo(gIdx)}
                 >
-                  {/* Timestamp */}
-                  <span style={{ fontSize:'13px', fontWeight:700, color:'#64748b', flexShrink:0, paddingTop:'8px', minWidth:'38px' }}>
-                    {ts}:
+                  {/* Step Number */}
+                  <span style={{ fontSize:'13px', fontWeight:700, color:'#64748b', flexShrink:0, paddingTop:'8px', minWidth:'48px' }}>
+                    Step {gIdx + 1}:
                   </span>
 
                   {/* Play circle */}
@@ -328,7 +355,8 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
               );
             })}
           </div>
-        </div>
+          </div>
+        )}
 
         {/* ── RIGHT: AI Learning Modules ───────────────────────────────────── */}
         <div style={{
@@ -349,63 +377,62 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
           </h2>
 
           {/* Per-instruction cards */}
-          {(currentJob.instructions || []).map((inst, iIdx) => (
-            <div key={iIdx} style={{
-              backgroundColor:'#fff', borderRadius:'14px',
-              border:`1.5px solid ${allSteps.findIndex(s => s.iIdx === iIdx) === stepIdx ? '#bfdbfe' : '#e2e8f0'}`,
-              overflow:'hidden',
-            }}>
-              {/* Step header */}
-              <div style={{
-                padding:'14px 18px 10px',
-                backgroundColor: allSteps.findIndex(s => s.iIdx === iIdx) === stepIdx ? '#eff6ff' : '#f8fafc',
+          {(currentJob.instructions || []).map((inst, iIdx) => {
+            const step = inst.steps[0];
+            const gIdx = allSteps.findIndex(s => s.iIdx === iIdx && s.sIdx === 0);
+            const active = gIdx === stepIdx;
+            const fname = `audio_chunk_0${gIdx + 1}.mp3`;
+
+            return (
+              <div key={iIdx} style={{
+                backgroundColor:'#fff', 
+                borderRadius:'16px',
+                padding: '20px',
+                boxShadow: active ? '0 4px 20px rgba(59,130,246,0.1)' : '0 2px 12px rgba(0,0,0,0.03)',
+                border: active ? '1px solid #bfdbfe' : '1px solid #f1f5f9',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
               }}>
-                <p style={{ margin:0, fontSize:'14px', color:'#1e293b', lineHeight:1.5 }}>
-                  <span style={{ fontWeight:700 }}>Step {iIdx + 1}:</span>
-                  {' '}
-                  <span style={{ fontWeight:400 }}>{inst.instruction}</span>
-                </p>
+                {/* Light purple instruction box */}
+                <div style={{
+                  backgroundColor: '#f5f4fa',
+                  borderRadius: '8px',
+                  padding: '14px 16px',
+                }}>
+                  <p style={{ margin:0, fontSize:'14px', color:'#334155', lineHeight:1.5 }}>
+                    <span style={{ fontWeight:700, color:'#475569' }}>Step {iIdx + 1}:</span>
+                    {' '}
+                    <span style={{ fontWeight:500 }}>{inst.instruction}</span>
+                  </p>
+                </div>
+
+                {/* Play Segment + Download Row */}
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding: '0 4px' }}>
+                  {/* Play Segment */}
+                  <button
+                    onClick={() => active ? togglePlay() : jumpTo(gIdx)}
+                    style={{ display:'flex', alignItems:'center', gap:'10px', background:'none', border:'none', cursor:'pointer', padding:0 }}
+                  >
+                    <PlayCircle size={28} active={active} loading={isLoading} playing={isPlaying} onClick={() => {}} />
+                    <span style={{ fontSize:'13px', fontWeight:600, color:'#334155' }}>
+                      {active && isPlaying ? 'Playing…' : 'Play Segment'}
+                    </span>
+                  </button>
+
+                  {/* Download */}
+                  <button
+                    onClick={() => downloadStep(step, gIdx)}
+                    title="Download"
+                    style={{ display:'flex', alignItems:'center', gap:'6px', background:'none', border:'none', cursor:'pointer', padding:0 }}
+                  >
+                    <Download style={{ width:'14px', height:'14px', color:'#64748b' }} />
+                    <span style={{ fontSize:'12px', color:'#64748b', fontWeight:500 }}>{fname}</span>
+                  </button>
+                </div>
               </div>
-
-              {/* Step audio rows */}
-              {inst.steps.map((step, sIdx) => {
-                const gIdx   = allSteps.findIndex(s => s.iIdx === iIdx && s.sIdx === sIdx);
-                const active = gIdx === stepIdx;
-                const fname  = `audio_chunk_0${gIdx + 1}.mp3`;
-
-                return (
-                  <div key={sIdx} style={{
-                    padding:'12px 18px 14px',
-                    borderTop:'1px solid #f1f5f9',
-                    backgroundColor: active ? '#f0f7ff' : '#fff',
-                  }}>
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                      {/* Play Segment */}
-                      <button
-                        onClick={() => active ? togglePlay() : jumpTo(gIdx)}
-                        style={{ display:'flex', alignItems:'center', gap:'8px', background:'none', border:'none', cursor:'pointer', padding:0 }}
-                      >
-                        <PlayCircle active={active} loading={isLoading} playing={isPlaying} onClick={() => {}} />
-                        <span style={{ fontSize:'13px', fontWeight:600, color:'#2563eb' }}>
-                          {active && isPlaying ? 'Playing…' : 'Play Segment'}
-                        </span>
-                      </button>
-
-                      {/* Download */}
-                      <button
-                        onClick={() => downloadStep(step, gIdx)}
-                        title="Download"
-                        style={{ display:'flex', alignItems:'center', gap:'5px', background:'none', border:'none', cursor:'pointer', padding:0 }}
-                      >
-                        <Download style={{ width:'13px', height:'13px', color:'#64748b' }} />
-                        <span style={{ fontSize:'11px', color:'#64748b', fontWeight:500 }}>{fname}</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+            );
+          })}
 
           {allSteps.length === 0 && (
             <p style={{ textAlign:'center', color:'#94a3b8', fontSize:'13px', paddingTop:'24px' }}>
@@ -417,58 +444,122 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
 
       {/* ══ BOTTOM AUDIO PLAYER ══════════════════════════════════════════════ */}
       <div style={{
-        flexShrink:0, backgroundColor:'#fff',
-        borderTop:'1px solid #e2e8f0',
-        padding:'10px 28px',
-        display:'flex', alignItems:'center', gap:'20px',
+        padding: '0 28px 24px 28px',
+        flexShrink: 0,
       }}>
-        {/* Waveform */}
-        <WaveBars playing={isPlaying} />
-
-        {/* Transport controls */}
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', flexShrink:0 }}>
-          <button onClick={() => setShuffle(s => !s)} style={{ background:'none', border:'none', cursor:'pointer', padding:'5px', borderRadius:'6px', color: shuffle ? '#3b82f6' : '#94a3b8' }}>
-            <Shuffle style={{ width:'16px', height:'16px' }} />
-          </button>
-          <button onClick={prev} disabled={stepIdx === 0} style={{ background:'none', border:'none', cursor: stepIdx===0 ? 'not-allowed':'pointer', padding:'5px', color:'#475569', opacity: stepIdx===0 ? 0.3 : 1 }}>
-            <SkipBack style={{ width:'18px', height:'18px' }} />
-          </button>
-
-          {/* Main play button */}
-          <button
-            onClick={togglePlay}
-            disabled={isLoading || !!audioError}
-            style={{
-              width:'42px', height:'42px', borderRadius:'50%',
-              background:'linear-gradient(135deg,#3b82f6,#1d4ed8)',
-              border:'none', cursor: (isLoading || audioError) ? 'not-allowed' : 'pointer',
-              display:'flex', alignItems:'center', justifyContent:'center',
-              boxShadow:'0 3px 10px rgba(59,130,246,0.45)',
-              opacity: (isLoading || audioError) ? 0.5 : 1,
-            }}
-          >
-            {isLoading
-              ? <Loader2 style={{ width:'16px', height:'16px', color:'#fff', animation:'sw-spin 1s linear infinite' }} />
-              : isPlaying
-                ? <Pause style={{ width:'16px', height:'16px', color:'#fff' }} />
-                : <Play  style={{ width:'16px', height:'16px', color:'#fff', marginLeft:'2px' }} />}
-          </button>
-
-          <button onClick={next} disabled={!shuffle && stepIdx === allSteps.length - 1} style={{ background:'none', border:'none', cursor:(!shuffle&&stepIdx===allSteps.length-1)?'not-allowed':'pointer', padding:'5px', color:'#475569', opacity:(!shuffle&&stepIdx===allSteps.length-1)?0.3:1 }}>
-            <SkipForward style={{ width:'18px', height:'18px' }} />
-          </button>
-          <button onClick={() => setRepeat(r => !r)} style={{ background:'none', border:'none', cursor:'pointer', padding:'5px', borderRadius:'6px', color: repeat ? '#3b82f6' : '#94a3b8' }}>
-            <Repeat style={{ width:'16px', height:'16px' }} />
-          </button>
-        </div>
-
-        {/* Progress bar + timestamps */}
-        <div style={{ flex:1, display:'flex', alignItems:'center', gap:'10px', minWidth:0 }}>
-          <span style={{ fontSize:'11px', color:'#94a3b8', fontWeight:500, flexShrink:0 }}>{fmt(currentTime)}</span>
-          <div onClick={seek} style={{ flex:1, height:'4px', backgroundColor:'#e2e8f0', borderRadius:'2px', cursor:'pointer' }}>
-            <div style={{ height:'100%', backgroundColor:'#3b82f6', borderRadius:'2px', width:`${progressPct}%`, transition:'width 0.1s' }} />
+        <div style={{
+          backgroundColor: '#fff',
+          borderRadius: '100px',
+          border: '1px solid #cbd5e1',
+          padding: '12px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.02)',
+        }}>
+          {/* Left: Waveform Pill */}
+          <div style={{
+            backgroundColor: '#f1f5f9',
+            borderRadius: '100px',
+            padding: '8px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '180px',
+          }}>
+            <WaveBars playing={isPlaying} />
           </div>
-          <span style={{ fontSize:'11px', color:'#94a3b8', fontWeight:500, flexShrink:0 }}>{fmt(duration)}</span>
+
+          {/* Middle: Transport & Progress */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', maxWidth: '500px', margin: '0 40px' }}>
+            {/* Controls */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <button onClick={() => setShuffle(s => !s)} style={{ background:'none', border:'none', cursor:'pointer', padding:0, color: shuffle ? '#3b82f6' : '#94a3b8' }}>
+                <Shuffle style={{ width:'18px', height:'18px' }} />
+              </button>
+              <button onClick={prev} disabled={stepIdx === 0} style={{ background:'none', border:'none', cursor: stepIdx===0 ? 'not-allowed':'pointer', padding:0, color:'#94a3b8', opacity: stepIdx===0 ? 0.4 : 1 }}>
+                <SkipBack style={{ width:'20px', height:'20px', fill: 'currentColor' }} />
+              </button>
+
+              {/* Main play button */}
+              <button
+                onClick={togglePlay}
+                disabled={isLoading || !!audioError}
+                style={{
+                  width:'44px', height:'44px', borderRadius:'50%',
+                  background:'#dbeafe',
+                  border:'none', cursor: (isLoading || audioError) ? 'not-allowed' : 'pointer',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  opacity: (isLoading || audioError) ? 0.5 : 1,
+                }}
+              >
+                {isLoading
+                  ? <Loader2 style={{ width:'18px', height:'18px', color:'#3b82f6', animation:'sw-spin 1s linear infinite' }} />
+                  : isPlaying
+                    ? <Pause style={{ width:'18px', height:'18px', color:'#3b82f6', fill: 'currentColor' }} />
+                    : <Play  style={{ width:'18px', height:'18px', color:'#3b82f6', fill: 'currentColor', marginLeft:'2px' }} />}
+              </button>
+
+              <button onClick={next} disabled={!shuffle && stepIdx === allSteps.length - 1} style={{ background:'none', border:'none', cursor:(!shuffle&&stepIdx===allSteps.length-1)?'not-allowed':'pointer', padding:0, color:'#94a3b8', opacity:(!shuffle&&stepIdx===allSteps.length-1)?0.4:1 }}>
+                <SkipForward style={{ width:'20px', height:'20px', fill: 'currentColor' }} />
+              </button>
+              <button onClick={() => setRepeat(r => !r)} style={{ background:'none', border:'none', cursor:'pointer', padding:0, color: repeat ? '#3b82f6' : '#94a3b8' }}>
+                <Repeat style={{ width:'18px', height:'18px' }} />
+              </button>
+            </div>
+
+            {/* Progress */}
+            <div style={{ width: '100%', display:'flex', alignItems:'center', gap:'12px' }}>
+              <span style={{ fontSize:'11px', color:'#94a3b8', fontWeight:500, flexShrink:0 }}>{fmt(currentTime)}</span>
+              <div onClick={seek} style={{ flex:1, height:'4px', backgroundColor:'#e2e8f0', borderRadius:'2px', cursor:'pointer' }}>
+                <div style={{ height:'100%', backgroundColor:'#64748b', borderRadius:'2px', width:`${progressPct}%`, transition:'width 0.1s' }} />
+              </div>
+              <span style={{ fontSize:'11px', color:'#94a3b8', fontWeight:500, flexShrink:0 }}>{fmt(duration)}</span>
+            </div>
+          </div>
+
+          {/* Right: Volume & Extra */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, width: '180px', justifyContent: 'flex-end' }}>
+            {/* Playlist Toggle */}
+            <button 
+              onClick={() => setShowList(s => !s)}
+              title="Toggle Chunk List"
+              style={{ background:'none', border:'none', cursor:'pointer', padding:0, color: showList ? '#3b82f6' : '#94a3b8' }}
+            >
+              <ListMusic style={{ width:'18px', height:'18px' }} />
+            </button>
+            
+            {/* Volume Control */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button 
+                onClick={() => setIsMuted(m => !m)}
+                title={isMuted ? "Unmute" : "Mute"}
+                style={{ background:'none', border:'none', cursor:'pointer', padding:0, color:'#94a3b8' }}
+              >
+                {isMuted || volume === 0 ? <VolumeX style={{ width:'18px', height:'18px' }} /> : <Volume2 style={{ width:'18px', height:'18px' }} />}
+              </button>
+              <div 
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const val = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  setVolume(val);
+                  if (isMuted && val > 0) setIsMuted(false);
+                }}
+                style={{ width: '60px', height: '4px', backgroundColor: '#e2e8f0', borderRadius: '2px', cursor: 'pointer', display: 'flex' }}
+              >
+                <div style={{ width: `${(isMuted ? 0 : volume) * 100}%`, height: '100%', backgroundColor: '#94a3b8', borderRadius: '2px', transition: 'width 0.1s' }}></div>
+              </div>
+            </div>
+
+            {/* Fullscreen Toggle */}
+            <button 
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+              style={{ background:'none', border:'none', cursor:'pointer', padding:0, color:'#94a3b8' }}
+            >
+              {isFullscreen ? <Minimize2 style={{ width:'16px', height:'16px' }} /> : <Maximize2 style={{ width:'16px', height:'16px' }} />}
+            </button>
+          </div>
         </div>
       </div>
     </div>
