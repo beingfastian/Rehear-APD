@@ -15,7 +15,7 @@ function getStoredUser() {
   }
 }
 
-const Header = ({ onLogout }) => {
+const Header = ({ onLogout, onToggleSidebar }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const dropdownRef = useRef(null);
@@ -47,12 +47,18 @@ const Header = ({ onLogout }) => {
       {/* Left: logo + hamburger */}
       <div className="flex items-center" style={{ gap: '14px' }}>
         <img
-          src="/rehear-logo.png"
+          src="/Rehear%20APD.png"
           alt="Rehear APD"
-          style={{ height: '36px', width: 'auto', objectFit: 'contain' }}
+          style={{ height: '80px', width: 'auto', objectFit: 'contain' }}
           onError={e => { e.target.style.display = 'none'; }}
         />
-        <img src={imgMenu} alt="menu" style={{ height: '22px', width: '22px', objectFit: 'contain', opacity: 0.6 }} />
+        <img 
+          src={imgMenu} 
+          alt="menu" 
+          onClick={onToggleSidebar}
+          className="cursor-pointer transition-all duration-200 hover:scale-110 hover:opacity-100"
+          style={{ height: '22px', width: '22px', objectFit: 'contain', opacity: 0.6 }} 
+        />
       </div>
 
       {/* Center: search */}

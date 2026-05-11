@@ -45,6 +45,7 @@ function logout() {
 function AppContent({ onLogout }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [pageData, setPageData] = useState({});
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const { isAuthenticated, isAuthReady, logout, notification, showNotification } = useApp();
 
   useEffect(() => {
@@ -125,10 +126,10 @@ function AppContent({ onLogout }) {
         </div>
       ) : (
         <div className="flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#f6f6f9' }}>
-          <Header onLogout={handleLogout} />
+          <Header onLogout={handleLogout} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
 
           <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} onLogout={handleLogout} />
+          <Sidebar currentPage={currentPage} setCurrentPage={navigateTo} onLogout={handleLogout} isCollapsed={isSidebarCollapsed} />
 
             <div className="flex-1 overflow-auto">
               {currentPage === 'dashboard' && (

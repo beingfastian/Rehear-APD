@@ -117,12 +117,12 @@ const Dashboard = ({ setCurrentPage }) => {
     <div className="min-h-full" style={{ padding: '40px', backgroundColor: '#f6f6f9', fontFamily: 'Urbanist, sans-serif' }}>
 
       {/* Page title */}
-      <div className="flex items-center justify-between" style={{ marginBottom: '43px' }}>
+      <div className="flex items-center justify-center relative" style={{ marginBottom: '43px' }}>
         <h1 className="font-bold whitespace-nowrap" style={{ fontSize: '34px', color: '#343434', lineHeight: 1.3 }}>
           Learning Hub Overview
         </h1>
         <div
-          className="flex items-center gap-2 font-semibold"
+          className="flex items-center gap-2 font-semibold absolute right-0"
           style={{
             padding: '6px 12px',
             borderRadius: '999px',
@@ -169,12 +169,12 @@ const Dashboard = ({ setCurrentPage }) => {
         {/* Two side-by-side cards */}
         <div className="grid grid-cols-1 md:grid-cols-2" style={{ gap: '32px', padding: '0 10px' }}>
 
-          {/* Instructional Chunks */}
+          {/* Instructions */}
           <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
             <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img src={imgGroup1} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
             </div>
-            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Instructional Chunks</p>
+            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Instructions</p>
             <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', lineHeight: 'normal' }}>
               View logical steps and segments generated via AI-driven sentence arrays.
             </p>
@@ -189,7 +189,7 @@ const Dashboard = ({ setCurrentPage }) => {
               onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f3f1fd'}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
             >
-              View Chunks
+              View Instructions
             </button>
           </div>
 

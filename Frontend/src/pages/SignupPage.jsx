@@ -55,7 +55,7 @@ const SignupPage = ({ setCurrentPage }) => {
         <div className="bg-white rounded-[2rem] border border-sky-100 shadow-xl shadow-sky-100/60 p-6 sm:p-10 order-2 lg:order-1">
           <div className="max-w-md mx-auto">
             <div className="lg:hidden flex justify-center mb-6">
-              <img src="/rehear-logo.png" alt="Rehear APD" className="h-14 w-auto object-contain" />
+              <img src="/Rehear%20APD.png" alt="Rehear APD" className="h-20 w-auto object-contain" />
             </div>
 
             <p className="text-sm uppercase tracking-[0.24em] text-sky-600 font-semibold">Create account</p>
@@ -176,7 +176,7 @@ const SignupPage = ({ setCurrentPage }) => {
         <div className="hidden lg:flex rounded-[2rem] bg-white/75 border border-white/70 backdrop-blur-xl p-10 flex-col justify-between order-1 lg:order-2 overflow-hidden relative">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.16),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.18),_transparent_32%)]" />
           <div className="relative">
-            <img src="/rehear-logo.png" alt="Rehear APD" className="h-16 w-auto object-contain" />
+            <img src="/Rehear%20APD.png" alt="Rehear APD" className="h-24 w-auto object-contain" />
             <p className="mt-8 text-sky-700 text-sm uppercase tracking-[0.22em] font-semibold">Protected workspace</p>
             <h1 className="mt-4 text-4xl font-bold leading-tight text-slate-950">Create one account that can hold usage, subscriptions, and future Google-linked access.</h1>
             <p className="mt-5 text-slate-600 text-base leading-relaxed max-w-lg">
