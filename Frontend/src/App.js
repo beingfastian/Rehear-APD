@@ -79,7 +79,7 @@ function AppContent({ onLogout }) {
       <div className="min-h-screen bg-sky-50 flex items-center justify-center px-6">
         <div className="bg-white rounded-3xl shadow-sm border border-sky-100 px-10 py-12 text-center max-w-md w-full">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center mb-4">
-            <img src="/rehear-logo.png" alt="Rehear APD" className="h-8 w-auto object-contain" onError={e => { e.target.src = '/rehear-logo.png'; }} />
+            <img src="/rehear-logo-transparent.png" alt="Rehear APD" className="h-8 w-auto object-contain" onError={e => { e.target.src = '/rehear-logo-transparent.png'; }} />
           </div>
           <h1 className="text-xl font-bold text-gray-900">Restoring your session</h1>
           <p className="text-sm text-gray-500 mt-2">Checking your account state before loading the workspace.</p>
@@ -235,10 +235,10 @@ function App() {
       <div className="min-h-screen bg-sky-50 flex items-center justify-center">
         <div className="text-center">
           <img
-            src="/rehear-logo.png"
+            src="/rehear-logo-transparent.png"
             alt="Rehear APD"
             className="h-20 w-auto object-contain mx-auto mb-4"
-            onError={e => { e.target.src = '/rehear-logo.png'; }}
+            onError={e => { e.target.src = '/rehear-logo-transparent.png'; }}
           />
           <div className="w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto" />
         </div>

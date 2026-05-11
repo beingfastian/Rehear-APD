@@ -471,7 +471,7 @@ const AuthPage = ({ onAuthenticated }) => {
         {/* ── Logo — mix-blend-mode:multiply dissolves white PNG bg into sky-50 ── */}
         <div className="flex flex-col items-center mb-7">
           <img
-            src="/rehear-logo.png"
+            src="/rehear-logo-transparent.png"
             alt="Rehear APD"
             className="h-14 w-auto object-contain mb-5"
             style={{

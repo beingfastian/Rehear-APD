@@ -47,7 +47,7 @@ const Header = ({ onLogout, onToggleSidebar }) => {
       {/* Left: logo + hamburger */}
       <div className="flex items-center" style={{ gap: '14px' }}>
         <img
-          src="/Rehear%20APD.png"
+          src="/rehear-logo-transparent.png"
           alt="Rehear APD"
           style={{ height: '80px', width: 'auto', objectFit: 'contain' }}
           onError={e => { e.target.style.display = 'none'; }}
