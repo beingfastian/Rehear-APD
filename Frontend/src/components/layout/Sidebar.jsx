@@ -1,19 +1,13 @@
 import React, { useState } from 'react';
 
-const imgVuesaxBoldCategory   = "https://www.figma.com/api/mcp/asset/6c2d9bed-6c1f-44e9-8102-b499add80345";
-const imgFrame                = "https://www.figma.com/api/mcp/asset/96adb722-bfda-4946-bdab-ddad5fc93140";
-const imgFrame1               = "https://www.figma.com/api/mcp/asset/4cce977c-f24a-4f9d-b690-59cd14a90960";
-const imgVuesaxOutlineSetting2= "https://www.figma.com/api/mcp/asset/3910f83f-1670-4938-8db7-fb5a745cd82c";
-const imgVuesaxOutlineLampOn  = "https://www.figma.com/api/mcp/asset/af41f78a-f8b6-46df-8672-32a4a6a2edf1";
-const imgFrame2               = "https://www.figma.com/api/mcp/asset/b5acdbff-b3fc-4ac3-aae5-946c3423ce17";
-const imgLayer1               = "https://www.figma.com/api/mcp/asset/cc77b816-3b47-4167-ba11-009824f6fa2d";
+import { IconCategory, IconFolder, IconEdit, IconSettings, IconHelp, IconLogout } from '../../assets/icons';
 
 const menuItems = [
-  { id: 'dashboard', icon: imgVuesaxBoldCategory,    label: 'Learning Hub' },
-  { id: 'media',     icon: imgFrame,                  label: 'Resource Library' },
-  { id: 'segment',   icon: imgFrame1,                 label: 'Module Editor' },
-  { id: 'settings',  icon: imgVuesaxOutlineSetting2,  label: 'Settings' },
-  { id: 'help',      icon: imgVuesaxOutlineLampOn,     label: 'Help Center' },
+  { id: 'dashboard', icon: IconCategory,    label: 'Learning Hub' },
+  { id: 'media',     icon: IconFolder,      label: 'Resource Library' },
+  { id: 'segment',   icon: IconEdit,        label: 'Module Editor' },
+  { id: 'settings',  icon: IconSettings,    label: 'Settings' },
+  { id: 'help',      icon: IconHelp,        label: 'Help Center' },
 ];
 
 const Sidebar = ({ currentPage, setCurrentPage, onLogout, isCollapsed }) => {
@@ -92,7 +86,7 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout, isCollapsed }) => {
                       transition: 'all 0.3s ease',
                     }} />
                   )}
-                  <img src={item.icon} alt="" style={{ width: '20px', height: '20px', flexShrink: 0 }} />
+                  <item.icon style={{ width: '20px', height: '20px', flexShrink: 0, color: active ? '#1674cc' : '#6a7380' }} />
                   <span 
                     className="font-semibold whitespace-nowrap overflow-hidden transition-all duration-300" 
                     style={{ 
@@ -137,7 +131,7 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout, isCollapsed }) => {
                 <circle cx="12" cy="12" r="9" stroke="#6a7380" strokeWidth="2" strokeDasharray="42" strokeDashoffset="14" strokeLinecap="round" />
               </svg>
             ) : (
-              <img src={imgFrame2} alt="" style={{ width: '18px', height: '18px', flexShrink: 0 }} />
+              <IconLogout style={{ width: '18px', height: '18px', flexShrink: 0, color: '#6a7380' }} />
             )}
             <span 
               className="font-semibold whitespace-nowrap overflow-hidden transition-all duration-300" 

@@ -1,10 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const imgVuesaxOutlineSearchNormal = "https://www.figma.com/api/mcp/asset/a9c45c4f-19a5-4fd3-a2cc-57c1fcf3493e";
-const imgVuesaxBoldNotification    = "https://www.figma.com/api/mcp/asset/584eeac1-a0a8-4c2b-aceb-5a9bc82244bb";
-const imgStroke                    = "https://www.figma.com/api/mcp/asset/19361cc3-e9d7-423e-a32a-2c241a226777";
-const imgVector                    = "https://www.figma.com/api/mcp/asset/fe7d9131-43d7-48f4-9f0c-747c08df77e4";
-const imgMenu                      = "https://www.figma.com/api/mcp/asset/54390e0d-5e39-4247-9c24-652c97d3bd87";
+import { IconSearch, IconChevronDown, IconMenu } from '../../assets/icons';
 
 function getStoredUser() {
   try {
@@ -52,13 +48,9 @@ const Header = ({ onLogout, onToggleSidebar }) => {
           style={{ height: '80px', width: 'auto', objectFit: 'contain' }}
           onError={e => { e.target.style.display = 'none'; }}
         />
-        <img 
-          src={imgMenu} 
-          alt="menu" 
-          onClick={onToggleSidebar}
-          className="cursor-pointer transition-all duration-200 hover:scale-110 hover:opacity-100"
-          style={{ height: '22px', width: '22px', objectFit: 'contain', opacity: 0.6 }} 
-        />
+        <div onClick={onToggleSidebar} className="cursor-pointer transition-all duration-200 hover:scale-110 hover:opacity-100" style={{ opacity: 0.6 }}>
+          <IconMenu style={{ height: '22px', width: '22px' }} />
+        </div>
       </div>
 
       {/* Center: search */}
@@ -67,7 +59,7 @@ const Header = ({ onLogout, onToggleSidebar }) => {
           className="bg-white flex items-center"
           style={{ gap: '8px', border: '1px solid #c1c1c8', borderRadius: '10px', padding: '9px 14px' }}
         >
-          <img src={imgVuesaxOutlineSearchNormal} alt="search" style={{ width: '18px', height: '18px', flexShrink: 0, opacity: 0.5 }} />
+          <IconSearch style={{ width: '18px', height: '18px', flexShrink: 0, opacity: 0.5, color: '#6a7380' }} />
           <input
             type="text"
             placeholder="Search lectures or modules..."
@@ -101,7 +93,7 @@ const Header = ({ onLogout, onToggleSidebar }) => {
             <span className="font-semibold whitespace-nowrap" style={{ fontSize: '14px', color: '#343434', lineHeight: 1.3 }}>
               {displayName}
             </span>
-            <img src={imgVector} alt="dropdown" style={{ width: '18px', height: '18px', objectFit: 'contain', opacity: 0.6 }} />
+            <IconChevronDown style={{ width: '18px', height: '18px', opacity: 0.6, color: '#343434' }} />
           </button>
 
           {dropdownOpen && (

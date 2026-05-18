@@ -5,9 +5,7 @@ import apiService from '../services/api';
 import RecentActivityTable from '../components/dashboard/RecentActivityTable';
 import FileUpload from '../components/shared/FileUpload';
 
-const imgGroup  = "https://www.figma.com/api/mcp/asset/6ff58e1f-4acd-494e-a153-502213432598";
-const imgGroup1 = "https://www.figma.com/api/mcp/asset/0683a4ef-85c9-4041-ba52-7a9e7d9874ef";
-const imgExport = "https://www.figma.com/api/mcp/asset/d455f941-f7b0-4c04-a652-edca66033ca1";
+import { IconSparkles, IconBook, IconUpload } from '../assets/icons';
 
 /* ── Name Recording Modal ─────────────────────────────────────────────────── */
 const NameRecordingModal = ({ onConfirm, onClose }) => {
@@ -143,7 +141,7 @@ const Dashboard = ({ setCurrentPage }) => {
         {/* Smart Lesson Capture — full width */}
         <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
           <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <img src={imgGroup} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            <IconSparkles style={{ width: '100%', height: '100%', color: '#1674cc' }} />
           </div>
           <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Smart Lesson Capture</p>
           <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', maxWidth: '600px', lineHeight: 'normal' }}>
@@ -172,9 +170,9 @@ const Dashboard = ({ setCurrentPage }) => {
           {/* Instructions */}
           <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
             <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <img src={imgGroup1} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              <IconBook style={{ width: '100%', height: '100%', color: '#1674cc' }} />
             </div>
-            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Instructions</p>
+            <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Instructional Chunks</p>
             <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', lineHeight: 'normal' }}>
               View logical steps and segments generated via AI-driven sentence arrays.
             </p>
@@ -189,14 +187,14 @@ const Dashboard = ({ setCurrentPage }) => {
               onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f3f1fd'}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
             >
-              View Instructions
+              View Chunks →
             </button>
           </div>
 
           {/* Upload Audio */}
           <div className="flex flex-col items-center" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px 32px', gap: '16px', overflow: 'hidden' }}>
             <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <img src={imgExport} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              <IconUpload style={{ width: '100%', height: '100%', color: '#1674cc' }} />
             </div>
             <p className="font-bold whitespace-nowrap" style={{ fontSize: '24px', color: '#343434', lineHeight: 1.3 }}>Upload Audio</p>
             <p className="text-center" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '14px', color: '#6a7380', lineHeight: 'normal' }}>
