@@ -284,31 +284,37 @@ def detect_instructions(transcription: str) -> tuple[dict, dict]:
     NOTE: Only used by /analyze-audio (file upload workflow).
     The live endpoint /process-live-text skips this to avoid double GPT calls.
     """
-    system_prompt = """You are an instruction filter and extractor.
+    system_prompt = """You are a strict Instruction Extractor for spoken classroom and training sessions.
 
-Your job:
-1. Read the transcription text
-2. IDENTIFY sentences that are clear instructions or actionable steps
-3. IGNORE all non-instructional content (greetings, filler words, questions, commentary, explanations)
-4. Return ONLY the filtered instruction sentences
+INPUT: A paragraph of naturally spoken speech. It may mix casual conversation, greetings, filler words, and actionable instructions.
 
-Each instruction should be:
-- A clear, actionable statement
-- Free from filler words and unnecessary context
-- Standalone and understandable
+TASK:
+1. Identify every DISTINCT, ACTIONABLE instruction — commands the listener must physically do.
+2. SPLIT compound instructions into separate items ("open the book and turn to page 5" → two items).
+3. DISCARD everything that is not an action command:
+   - Greetings: "hello", "hi", "good morning", "hey", "my name is..."
+   - Filler: "okay", "so", "um", "uh", "right", "you know", "basically", "Bros", "partner"
+   - Random words or nonsense: "Aisa laser", "gaming class of water", "evening glass of water"
+   - Questions, explanations, commentary, self-introductions
+   - Emotional statements or reactions
+4. CLEAN each instruction:
+   - Fix speech-to-text errors
+   - Remove filler words from within the instruction
+   - Write as a clear, concise imperative sentence starting with a verb
+5. Minimum length: each instruction must be at least 3-4 words long AND contain a clear action verb.
 
 Return JSON format:
 {
     "instructions": [
-        "Open your textbook to page 45",
-        "Look at the diagram on the right",
-        "Circle the carbon atoms in red"
+        "Open your book",
+        "Close your book",
+        "Give me a glass of water"
     ]
 }
 
 If NO instructions are found, return: {"instructions": []}
 
-IMPORTANT: Return a flat array of instruction strings, NOT objects with steps."""
+IMPORTANT: Return a flat array of instruction strings inside the 'instructions' key. Do NOT return the full transcription."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -895,16 +901,11 @@ async def process_live_text(
     current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """
-    Optimized live transcription save.
-
-    FIX #1 — No second GPT call: text was already confirmed as a valid
-    instruction by /filter-live-chunk on the frontend.
-
-    FIX #2 — Non-blocking: TTS generation and S3 upload run in the global
-    thread pool so they don't block the async event loop.
-
-    PERF — save_to_database now uses parallel TTS internally.
+    Live transcription bulk save.
+    Receives the full transcript from the live session, extracts instructions,
+    generates TTS, and saves the job.
     """
+    extraction_event = None
     tts_event = None
     try:
         job_id           = f"live_{uuid.uuid4().hex[:8]}"
@@ -913,24 +914,108 @@ async def process_live_text(
         if not instruction_text:
             raise HTTPException(status_code=400, detail="Text is required")
 
-        print(f"[{job_id}] Saving pre-filtered instruction: {instruction_text[:80]}")
+        print(f"[{job_id}] Processing live transcription: {instruction_text[:80]}")
 
-        if current_user and instruction_text:
+        if current_user:
+            extraction_event = billing.reserve_usage_event(
+                db,
+                current_user,
+                endpoint="/process-live-text",
+                model="gpt-4o-mini",
+                operation="instruction_extract",
+                estimated_credits=billing.estimate_chat_credits_from_text(instruction_text),
+                job_id=job_id,
+            )
+
+        loop = asyncio.get_event_loop()
+
+        # ── Strict extraction: plain JSON array, no json_object mode ──────────
+        _strict_sys = """You are a strict Instruction Extractor for spoken classroom and training sessions.
+
+INPUT: A full transcription of naturally spoken speech. It mixes casual conversation, greetings, filler words, and actionable instructions.
+
+TASK:
+1. Identify every DISTINCT, ACTIONABLE instruction — commands the listener must physically do.
+2. SPLIT compound instructions into separate items ("open the book and turn to page 5" → two items).
+3. DISCARD everything that is not an action command:
+   - Greetings/introductions: "hello", "hi", "my name is...", "good morning"
+   - Filler: "okay", "so", "um", "uh", "right", "you know", "basically"
+   - Speech-to-text noise: nonsense phrases, partial words
+   - Questions, explanations, commentary, self-introductions
+   - Emotional statements or reactions
+4. CLEAN each instruction:
+   - Fix speech-to-text errors
+   - Remove filler words from within the instruction
+   - Write as a clear, concise imperative sentence starting with a verb
+5. Each instruction must be at least 3 words long AND contain a clear action verb.
+
+OUTPUT: Return ONLY a valid JSON array of strings. No explanation, no markdown, no extra keys.
+If no instructions are found, return: []
+
+EXAMPLES:
+Input: "hello my name is Mohammed please open your book close give me your id OK go to washroom"
+Output: ["Open your book", "Close your book", "Give me your ID", "Go to the washroom"]
+
+Input: "students please open textbook to page 45 and circle carbon atoms in red then close the book"
+Output: ["Open your textbook to page 45", "Circle the carbon atoms in red", "Close the book"]
+
+Input: "hi how are you doing today that's great okay so yeah"
+Output: []"""
+
+        def do_extraction():
+            return client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": _strict_sys},
+                    {"role": "user", "content": instruction_text}
+                ],
+                temperature=0,
+                max_tokens=1000,
+                timeout=30,
+            )
+
+        print(f"[{job_id}] Extracting instructions via strict prompt...")
+        ext_response = await loop.run_in_executor(executor, do_extraction)
+
+        usage_meta    = billing.usage_from_chat_response(ext_response)
+        raw_output    = ext_response.choices[0].message.content.strip()
+        print(f"[{job_id}] GPT raw output: {raw_output}")
+
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_output, flags=re.MULTILINE).strip()
+        try:
+            instruction_list = json.loads(cleaned) if cleaned else []
+        except json.JSONDecodeError:
+            instruction_list = []
+        if not isinstance(instruction_list, list):
+            instruction_list = []
+        instruction_list = [str(i).strip() for i in instruction_list if str(i).strip()]
+        print(f"[{job_id}] Extracted {len(instruction_list)} instructions: {instruction_list}")
+
+        if extraction_event:
+            billing.finalize_usage_event(
+                db,
+                extraction_event,
+                actual_credits=billing.credits_for_chat_tokens(usage_meta["total_tokens"]),
+                usage_values=usage_meta,
+                response_metadata={"instruction_count": len(instruction_list)},
+            )
+
+        # If instructions are found, prepare TTS event
+        if current_user and instruction_list:
             tts_event = billing.reserve_usage_event(
                 db,
                 current_user,
                 endpoint="/process-live-text",
                 model="tts-1",
                 operation="tts_batch",
-                estimated_credits=billing.credits_for_tts_characters(len(instruction_text)),
+                estimated_credits=billing.credits_for_tts_characters(sum(len(text) for text in instruction_list)),
                 job_id=job_id,
+                request_metadata={"instruction_count": len(instruction_list)},
             )
 
-        # FIX #1: Skip detect_instructions() — already filtered by frontend
-        instructions_data = {"instructions": [instruction_text]}
+        instructions_data = {"instructions": instruction_list}
 
-        # FIX #2: Run blocking TTS + S3 + DB work in thread pool
-        loop = asyncio.get_event_loop()
+        # Run TTS generation and DB saving in thread pool (parallel per-instruction)
         saved_instructions = await loop.run_in_executor(
             executor,
             lambda: save_to_database_in_new_session(job_id, instruction_text, instructions_data)
@@ -949,35 +1034,39 @@ async def process_live_text(
                 actual_credits=billing.credits_for_tts_characters(total_characters),
                 usage_values={"input_characters": total_characters},
                 response_metadata={
-                    "requested_count": 1,
+                    "requested_count": len(instruction_list),
                     "generated_count": len(successful_instruction_texts),
                 },
             )
 
         billing.attach_job_to_user(db, current_user, job_id)
 
-        # Fetch saved chunk to return the audio URL
-        chunk = db.query(AudioChunk).filter_by(
-            job_id=job_id,
-            instruction_index=0,
-            step_index=0
-        ).first()
+        # Format output
+        instructions_formatted = []
+        for idx, inst_text in enumerate(instruction_list):
+            chunk = db.query(AudioChunk).filter_by(
+                job_id=job_id,
+                instruction_index=idx,
+                step_index=0
+            ).first()
+
+            instructions_formatted.append({
+                "instruction": inst_text,
+                "steps": [{
+                    "text": inst_text,
+                    "audio": chunk.audio_url if chunk else None
+                }]
+            })
 
         return {
             "job_id": job_id,
             "transcription": instruction_text,
-            "instruction_count": 1,
-            "instructions": [{
-                "instruction": instruction_text,
-                "steps": [{
-                    "text": instruction_text,
-                    "audio": chunk.audio_url if chunk else None
-                }]
-            }],
+            "instruction_count": len(instruction_list),
+            "instructions": instructions_formatted,
             "meta": {
                 "saved_to_db": True,
                 "timestamp": datetime.utcnow().isoformat(),
-                "processing_type": "live_transcription_optimized",
+                "processing_type": "live_transcription_full",
                 "billing": billing.get_current_billing_summary(db, current_user) if current_user else None,
             }
         }
@@ -985,10 +1074,12 @@ async def process_live_text(
     except HTTPException:
         db.rollback()
         billing.release_usage_event(db, tts_event)
+        billing.release_usage_event(db, extraction_event)
         raise
     except Exception as e:
         db.rollback()
         billing.release_usage_event(db, tts_event, failure_reason=str(e))
+        billing.release_usage_event(db, extraction_event, failure_reason=str(e))
         print(f"[Error] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 

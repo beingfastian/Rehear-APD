@@ -1,24 +1,21 @@
 import React, { useState } from 'react';
 
-const imgVuesaxBoldCategory   = "https://www.figma.com/api/mcp/asset/6c2d9bed-6c1f-44e9-8102-b499add80345";
-const imgFrame                = "https://www.figma.com/api/mcp/asset/96adb722-bfda-4946-bdab-ddad5fc93140";
-const imgFrame1               = "https://www.figma.com/api/mcp/asset/4cce977c-f24a-4f9d-b690-59cd14a90960";
-const imgVuesaxOutlineSetting2= "https://www.figma.com/api/mcp/asset/3910f83f-1670-4938-8db7-fb5a745cd82c";
-const imgVuesaxOutlineLampOn  = "https://www.figma.com/api/mcp/asset/af41f78a-f8b6-46df-8672-32a4a6a2edf1";
-const imgFrame2               = "https://www.figma.com/api/mcp/asset/b5acdbff-b3fc-4ac3-aae5-946c3423ce17";
-const imgLayer1               = "https://www.figma.com/api/mcp/asset/cc77b816-3b47-4167-ba11-009824f6fa2d";
+import { IconCategory, IconFolder, IconEdit, IconSettings, IconHelp, IconLogout } from '../../assets/icons';
 
 const menuItems = [
-  { id: 'dashboard', icon: imgVuesaxBoldCategory,    label: 'Learning Hub' },
-  { id: 'media',     icon: imgFrame,                  label: 'Resource Library' },
-  { id: 'segment',   icon: imgFrame1,                 label: 'Module Editor' },
-  { id: 'settings',  icon: imgVuesaxOutlineSetting2,  label: 'Settings' },
-  { id: 'help',      icon: imgVuesaxOutlineLampOn,     label: 'Help Center' },
+  { id: 'dashboard', icon: IconCategory,    label: 'Learning Hub' },
+  { id: 'media',     icon: IconFolder,      label: 'Resource Library' },
+  { id: 'segment',   icon: IconEdit,        label: 'Module Editor' },
+  { id: 'settings',  icon: IconSettings,    label: 'Settings' },
+  { id: 'help',      icon: IconHelp,        label: 'Help Center' },
 ];
 
-const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
+const Sidebar = ({ currentPage, setCurrentPage, onLogout, isCollapsed }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+
+  const effectivelyCollapsed = isCollapsed && !isHovered;
 
   const navigate = (page) => {
     setCurrentPage(page);
@@ -50,25 +47,28 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
       )}
 
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-40 bg-white h-full flex flex-col transform transition-transform duration-300
+        className={`fixed lg:static inset-y-0 left-0 z-40 bg-white h-full flex flex-col transform transition-all duration-300 ease-in-out
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
-        style={{ width: '220px', fontFamily: 'Urbanist, sans-serif', flexShrink: 0, borderRight: '1px solid #f0f0f4' }}
+        style={{ width: effectivelyCollapsed ? '80px' : '220px', fontFamily: 'Urbanist, sans-serif', flexShrink: 0, borderRight: '1px solid #f0f0f4' }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
       >
         {/* Nav */}
         <div className="flex-1 overflow-y-auto" style={{ position: 'relative' }}>
-          <nav className="flex flex-col" style={{ gap: '4px', paddingLeft: '16px', paddingRight: '16px', paddingTop: '12px' }}>
+          <nav className="flex flex-col" style={{ gap: '4px', paddingLeft: effectivelyCollapsed ? '8px' : '16px', paddingRight: effectivelyCollapsed ? '8px' : '16px', paddingTop: '12px' }}>
             {menuItems.map((item) => {
               const active = currentPage === item.id;
               return (
                 <div
                   key={item.id}
                   onClick={() => navigate(item.id)}
-                  className="relative flex items-center cursor-pointer transition-colors"
+                  className="relative flex items-center cursor-pointer transition-all duration-300"
                   style={{
-                    gap: '10px',
-                    padding: '9px 10px',
+                    gap: effectivelyCollapsed ? '0px' : '10px',
+                    padding: effectivelyCollapsed ? '9px 0px' : '9px 10px',
                     borderRadius: '8px',
                     backgroundColor: active ? '#f3f1fd' : 'transparent',
+                    justifyContent: effectivelyCollapsed ? 'center' : 'flex-start',
                   }}
                   onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = 'rgba(243,241,253,0.5)'; }}
                   onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -76,17 +76,27 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
                   {active && (
                     <span style={{
                       position: 'absolute',
-                      left: '-16px',
+                      left: effectivelyCollapsed ? '0px' : '-16px',
                       top: '50%',
                       transform: 'translateY(-50%)',
                       width: '3px',
                       height: '24px',
                       backgroundColor: '#1674cc',
                       borderRadius: '0 3px 3px 0',
+                      transition: 'all 0.3s ease',
                     }} />
                   )}
-                  <img src={item.icon} alt="" style={{ width: '20px', height: '20px', flexShrink: 0 }} />
-                  <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: active ? '#1674cc' : '#6a7380' }}>
+                  <item.icon style={{ width: '20px', height: '20px', flexShrink: 0, color: active ? '#1674cc' : '#6a7380' }} />
+                  <span 
+                    className="font-semibold whitespace-nowrap overflow-hidden transition-all duration-300" 
+                    style={{ 
+                      fontSize: '14px', 
+                      lineHeight: 1.3, 
+                      color: active ? '#1674cc' : '#6a7380',
+                      maxWidth: effectivelyCollapsed ? '0px' : '120px',
+                      opacity: effectivelyCollapsed ? 0 : 1,
+                    }}
+                  >
                     {item.label}
                   </span>
                 </div>
@@ -96,20 +106,21 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
         </div>
 
         {/* Log out */}
-        <div style={{ padding: '0 16px 24px' }}>
+        <div style={{ padding: effectivelyCollapsed ? '0 8px 24px' : '0 16px 24px' }}>
           <button
             id="sidebar-logout-btn"
             onClick={handleLogout}
             disabled={loggingOut}
-            className="flex items-center w-full transition-colors"
+            className="flex items-center w-full transition-all duration-300"
             style={{
-              gap: '10px',
-              padding: '9px 10px',
+              gap: effectivelyCollapsed ? '0px' : '10px',
+              padding: effectivelyCollapsed ? '9px 0px' : '9px 10px',
               borderRadius: '8px',
               background: 'none',
               border: 'none',
               cursor: loggingOut ? 'not-allowed' : 'pointer',
               opacity: loggingOut ? 0.6 : 1,
+              justifyContent: effectivelyCollapsed ? 'center' : 'flex-start',
             }}
             onMouseEnter={e => { if (!loggingOut) e.currentTarget.style.backgroundColor = '#fff0f0'; }}
             onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -120,9 +131,18 @@ const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
                 <circle cx="12" cy="12" r="9" stroke="#6a7380" strokeWidth="2" strokeDasharray="42" strokeDashoffset="14" strokeLinecap="round" />
               </svg>
             ) : (
-              <img src={imgFrame2} alt="" style={{ width: '18px', height: '18px', flexShrink: 0 }} />
+              <IconLogout style={{ width: '18px', height: '18px', flexShrink: 0, color: '#6a7380' }} />
             )}
-            <span className="font-semibold" style={{ fontSize: '14px', lineHeight: 1.3, color: '#6a7380' }}>
+            <span 
+              className="font-semibold whitespace-nowrap overflow-hidden transition-all duration-300" 
+              style={{ 
+                fontSize: '14px', 
+                lineHeight: 1.3, 
+                color: '#6a7380',
+                maxWidth: effectivelyCollapsed ? '0px' : '120px',
+                opacity: effectivelyCollapsed ? 0 : 1,
+              }}
+            >
               {loggingOut ? 'Logging out…' : 'Log out'}
             </span>
           </button>

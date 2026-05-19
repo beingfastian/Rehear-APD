@@ -1,14 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 
-const imgArrowUp              = "https://www.figma.com/api/mcp/asset/ca4dae79-ed26-4b25-b89a-a3a91f97e14b";
-const imgVuesaxOutlineMoreSq  = "https://www.figma.com/api/mcp/asset/6a8cc17f-d04b-45bd-9159-2c9e48f49a3f";
-const imgVuesaxBoldArrowDown  = "https://www.figma.com/api/mcp/asset/2c000eab-5a5c-4438-bd50-578d8028eb62";
-const imgVuesaxBoldArrowLeft  = "https://www.figma.com/api/mcp/asset/c1f5f49b-afc1-4f37-8bb1-d159bb11e959";
-const imgVuesaxBoldArrowRight = "https://www.figma.com/api/mcp/asset/b68c359b-75b8-4a52-9f6f-276e7c3dbe12";
-const imgEllipse1             = "https://www.figma.com/api/mcp/asset/2c1c8db9-4d7f-4802-aea9-480734fbac15";
-const imgVuesaxOutlineFilter  = "https://www.figma.com/api/mcp/asset/9e8504de-12ba-4d2a-abf3-d252551db5c1";
-const imgVuesaxOutlineSetting5= "https://www.figma.com/api/mcp/asset/2682a574-44d2-4e40-a42f-8b2390ea8a5b";
+import { IconArrowUp, IconMoreHorizontal, IconChevronDown, IconChevronLeft, IconChevronRight, IconFileAudio, IconFilter, IconSliders } from '../../assets/icons';
 
 const ROWS_PER_PAGE = 10;
 
@@ -50,10 +43,10 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
         <p className="font-bold" style={{ fontSize: '24px', color: '#222132', lineHeight: 1.3 }}>Recent activity</p>
         <div className="flex items-center" style={{ gap: '24px' }}>
           <button className="flex items-center justify-center" style={{ backgroundColor: '#f6f6f9', border: '1px solid #c1c1c8', borderRadius: '12px', padding: '16px' }}>
-            <img src={imgVuesaxOutlineFilter} alt="filter" style={{ width: '24px', height: '24px' }} />
+            <IconFilter style={{ width: '24px', height: '24px', color: '#6a7380' }} />
           </button>
           <button className="flex items-center justify-center" style={{ backgroundColor: '#f6f6f9', border: '1px solid #c1c1c8', borderRadius: '12px', padding: '16px' }}>
-            <img src={imgVuesaxOutlineSetting5} alt="settings" style={{ width: '24px', height: '24px' }} />
+            <IconSliders style={{ width: '24px', height: '24px', color: '#6a7380' }} />
           </button>
         </div>
       </div>
@@ -73,7 +66,7 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
                 <th key={col.label} style={{ padding: '8px', height: '64px', textAlign: col.align || 'left' }}>
                   <span className="inline-flex items-center font-bold whitespace-nowrap" style={{ gap: '8px', fontSize: '16px', color: '#343434', lineHeight: 1.3 }}>
                     {col.label}
-                    {col.label !== 'Action' && <img src={imgArrowUp} alt="" style={{ width: '16px', height: '16px' }} />}
+                    {col.label !== 'Action' && <IconArrowUp style={{ width: '16px', height: '16px', color: '#6a7380' }} />}
                   </span>
                 </th>
               ))}
@@ -91,7 +84,9 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
               >
                 <td style={{ padding: '0 8px', height: '50px' }}>
                   <div className="flex items-center" style={{ gap: '8px' }}>
-                    <img src={imgEllipse1} alt="" style={{ width: '24px', height: '24px', flexShrink: 0 }} />
+                    <div className="flex items-center justify-center rounded-full" style={{ width: '24px', height: '24px', backgroundColor: '#e8f0fe', color: '#1674cc', flexShrink: 0 }}>
+                      <IconFileAudio style={{ width: '14px', height: '14px' }} />
+                    </div>
                     <span className="font-semibold whitespace-nowrap" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '16px', color: '#232323' }}>
                       {item.name}
                     </span>
@@ -108,7 +103,7 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
                 </td>
                 <td style={{ padding: '0 8px', height: '50px', textAlign: 'right' }}>
                   <button onClick={(e) => { e.stopPropagation(); handleRowClick(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <img src={imgVuesaxOutlineMoreSq} alt="more" style={{ width: '24px', height: '24px' }} />
+                    <IconMoreHorizontal style={{ width: '24px', height: '24px', color: '#6a7380' }} />
                   </button>
                 </td>
               </tr>
@@ -142,11 +137,11 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
         <div className="flex items-center" style={{ gap: '12px', backgroundColor: 'white', borderRadius: '360px', padding: '16px 20px' }}>
           <span style={{ fontFamily: 'Urbanist, sans-serif', fontSize: '14px', color: '#232324', letterSpacing: '0.25px' }}>Rows per page</span>
           <span style={{ fontSize: '16px', color: '#232324' }}>{ROWS_PER_PAGE}</span>
-          <img src={imgVuesaxBoldArrowDown} alt="" style={{ width: '24px', height: '24px' }} />
+          <IconChevronDown style={{ width: '24px', height: '24px', color: '#6a7380' }} />
         </div>
         <div className="flex items-center" style={{ gap: '12px', padding: '12px' }}>
           <button onClick={() => setPage(p => Math.max(1, p - 1))} className="flex items-center justify-center" style={{ border: '1px solid #c1c1c8', borderRadius: '8px', padding: '8px', background: 'none', cursor: 'pointer' }}>
-            <img src={imgVuesaxBoldArrowLeft} alt="prev" style={{ width: '16px', height: '16px' }} />
+            <IconChevronLeft style={{ width: '16px', height: '16px', color: '#6a7380' }} />
           </button>
           <div className="flex items-center" style={{ gap: '4px' }}>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
@@ -169,7 +164,7 @@ const RecentActivityTable = ({ data, setCurrentPage }) => {
             ))}
           </div>
           <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="flex items-center justify-center" style={{ border: '1px solid #c1c1c8', borderRadius: '8px', padding: '8px', background: 'none', cursor: 'pointer' }}>
-            <img src={imgVuesaxBoldArrowRight} alt="next" style={{ width: '16px', height: '16px' }} />
+            <IconChevronRight style={{ width: '16px', height: '16px', color: '#6a7380' }} />
           </button>
         </div>
       </div>

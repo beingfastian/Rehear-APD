@@ -36,7 +36,7 @@ const ForgotPasswordPage = ({ setCurrentPage, pageData = {} }) => {
         <div className="hidden lg:flex rounded-[2rem] bg-slate-950 text-white p-10 flex-col justify-between overflow-hidden relative">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.18),_transparent_28%),radial-gradient(circle_at_bottom_left,_rgba(96,165,250,0.2),_transparent_32%)]" />
           <div className="relative">
-            <img src="/rehear-logo.png" alt="Rehear APD" className="h-16 w-auto object-contain" />
+            <img src="/rehear-logo-transparent.png" alt="Rehear APD" className="h-24 w-auto object-contain" />
             <p className="mt-8 text-sky-200 text-sm uppercase tracking-[0.22em] font-semibold">Password recovery</p>
             <h1 className="mt-4 text-4xl font-bold leading-tight">Request a verification code for your account email.</h1>
             <p className="mt-5 text-slate-300 text-base leading-relaxed max-w-lg">
@@ -63,7 +63,7 @@ const ForgotPasswordPage = ({ setCurrentPage, pageData = {} }) => {
         <div className="bg-white rounded-[2rem] border border-sky-100 shadow-xl shadow-sky-100/60 p-6 sm:p-10">
           <div className="max-w-md mx-auto">
             <div className="lg:hidden flex justify-center mb-6">
-              <img src="/rehear-logo.png" alt="Rehear APD" className="h-14 w-auto object-contain" />
+              <img src="/rehear-logo-transparent.png" alt="Rehear APD" className="h-20 w-auto object-contain" />
             </div>
 
             <button
