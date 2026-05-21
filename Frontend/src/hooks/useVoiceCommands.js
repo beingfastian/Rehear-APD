@@ -33,10 +33,24 @@ const COMMAND_MAP = [
 ];
 
 function matchCommand(transcript) {
-  const lower = transcript.toLowerCase().trim();
+  const full = transcript.toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "");
+  const words = full.split(/\s+/);
   for (const { key, patterns } of COMMAND_MAP) {
-    if (patterns.some(p => lower === p || lower.startsWith(p) || lower.includes(p))) {
+    if (patterns.includes(full)) {
       return key;
+    }
+    for (const pattern of patterns) {
+      const patternWords = pattern.split(/\s+/);
+      for (let i = 0; i <= words.length - patternWords.length; i++) {
+        let match = true;
+        for (let j = 0; j < patternWords.length; j++) {
+          if (words[i + j] !== patternWords[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return key;
+      }
     }
   }
   return null;
@@ -56,6 +70,7 @@ export function useVoiceCommands({
   const recognitionRef  = useRef(null);
   const isActiveRef     = useRef(false); // tracks whether we want it running
   const handlersRef     = useRef({});
+  const lastTriggeredIndexRef = useRef(-1);
 
   // Keep handlers current without restarting recognition.
   useEffect(() => {
@@ -83,23 +98,32 @@ export function useVoiceCommands({
 
     const rec = new SR();
     rec.continuous     = true;
-    rec.interimResults = false; // final results only — avoids partial false triggers
+    rec.interimResults = true; // show interim results so we can trigger snappily
     rec.lang           = 'en-US';
+
+    rec.onstart = () => {
+      if (recognitionRef.current !== rec) return;
+      lastTriggeredIndexRef.current = -1;
+      setIsListening(true);
+    };
 
     rec.onresult = (event) => {
       if (recognitionRef.current !== rec) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (!event.results[i].isFinal) continue;
-
         const result     = event.results[i][0];
         const transcript = result.transcript;
-        const confidence = result.confidence ?? 1; // some browsers omit confidence
+        const confidence = result.confidence ?? 1;
 
-        const threshold = isTTSActive() ? TTS_CONFIDENCE : NORMAL_CONFIDENCE;
+        if (i <= lastTriggeredIndexRef.current) continue;
+
+        const threshold = isTTSActive() ? TTS_CONFIDENCE : 0.20;
         if (confidence < threshold) continue;
 
         const command = matchCommand(transcript);
-        if (command) dispatch(command);
+        if (command) {
+          lastTriggeredIndexRef.current = i;
+          dispatch(command);
+        }
       }
     };
 

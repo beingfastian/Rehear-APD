@@ -28,10 +28,25 @@ const COMMAND_MAP = [
 ];
 
 export function matchVoiceCommand(transcript) {
-  const lower = transcript.toLowerCase().trim();
+  const full = transcript.toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "");
+  const words = full.split(/\s+/);
+
   for (const { cmd, patterns } of COMMAND_MAP) {
-    if (patterns.some(p => lower === p || lower.startsWith(p + ' ') || lower.endsWith(' ' + p) || lower.includes(p))) {
+    if (patterns.includes(full)) {
       return cmd;
+    }
+    for (const pattern of patterns) {
+      const patternWords = pattern.split(/\s+/);
+      for (let i = 0; i <= words.length - patternWords.length; i++) {
+        let match = true;
+        for (let j = 0; j < patternWords.length; j++) {
+          if (words[i + j] !== patternWords[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return cmd;
+      }
     }
   }
   return null;

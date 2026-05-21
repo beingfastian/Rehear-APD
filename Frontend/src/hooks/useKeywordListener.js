@@ -12,18 +12,27 @@ const KEYWORDS = {
 };
 
 function detectKeyword(transcript) {
-  const words = transcript.toLowerCase().trim().split(/\s+/);
-  // Check the LAST word spoken (most recent intent)
-  for (let i = words.length - 1; i >= 0; i--) {
-    const w = words[i];
-    for (const [action, triggers] of Object.entries(KEYWORDS)) {
-      if (triggers.includes(w)) return action;
-    }
-  }
-  // Also check full phrase
-  const full = transcript.toLowerCase().trim();
+  const full = transcript.toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, "");
+  const words = full.split(/\s+/);
+  // Check exact match first
   for (const [action, triggers] of Object.entries(KEYWORDS)) {
-    if (triggers.some(t => full.includes(t))) return action;
+    if (triggers.includes(full)) return action;
+  }
+  // Check whole-word / phrase match
+  for (const [action, triggers] of Object.entries(KEYWORDS)) {
+    for (const trigger of triggers) {
+      const triggerWords = trigger.split(/\s+/);
+      for (let i = 0; i <= words.length - triggerWords.length; i++) {
+        let match = true;
+        for (let j = 0; j < triggerWords.length; j++) {
+          if (words[i + j] !== triggerWords[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return action;
+      }
+    }
   }
   return null;
 }
@@ -45,6 +54,7 @@ export default function useKeywordListener({ onStart, onNext, onBack, enabled = 
   const recRef = useRef(null);
   const activeRef = useRef(false);
   const restartCountRef = useRef(0);
+  const lastTriggeredIndexRef = useRef(-1);
 
   useEffect(() => {
     if (!enabled) {
@@ -83,6 +93,7 @@ export default function useKeywordListener({ onStart, onNext, onBack, enabled = 
 
     rec.onstart = () => {
       if (recRef.current !== rec) return;
+      lastTriggeredIndexRef.current = -1;
       setStatus(s => ({ ...s, micActive: true, error: '' }));
     };
 
@@ -93,17 +104,18 @@ export default function useKeywordListener({ onStart, onNext, onBack, enabled = 
         const transcript = event.results[i][0].transcript;
         const isFinal = event.results[i].isFinal;
 
-        if (!isFinal) {
-          // Show interim so user sees mic is hearing them
-          setStatus(s => ({ ...s, lastHeard: `…${transcript}` }));
+        // Show interim so user sees mic is hearing them
+        setStatus(s => ({ ...s, lastHeard: isFinal ? transcript : `…${transcript}` }));
+
+        if (i <= lastTriggeredIndexRef.current) {
           continue;
         }
 
-        // Final result — check for keyword
-        setStatus(s => ({ ...s, lastHeard: transcript }));
+        // Check for keyword
         const keyword = detectKeyword(transcript);
         if (keyword) {
-          setStatus(s => ({ ...s, lastKeyword: keyword }));
+          lastTriggeredIndexRef.current = i;
+          setStatus(s => ({ ...s, lastKeyword: keyword, lastHeard: transcript }));
           const h = handlersRef.current;
           if (keyword === 'start') h.onStart?.();
           if (keyword === 'next')  h.onNext?.();
@@ -114,7 +126,6 @@ export default function useKeywordListener({ onStart, onNext, onBack, enabled = 
             setStatus(s => s.lastKeyword === keyword ? { ...s, lastKeyword: '' } : s);
           }, 1000);
         }
-        // else: silently discard — only keywords matter
       }
     };
 
