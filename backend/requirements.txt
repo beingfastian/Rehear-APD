@@ -1,3 +1,8 @@
+# backend/requirements.txt
+# MODIFIED: Added LangGraph + LangChain dependencies for Phase 4 voice agent.
+# All original packages are unchanged.
+
+# ── Original dependencies ───────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
 sqlalchemy
@@ -16,3 +21,9 @@ google-auth
 requests
 email-validator
 dnspython
+
+# ── Phase 4 Voice Agent (NEW) ───────────────────────────────────────────────
+langgraph>=0.2.0
+langchain>=0.2.0
+langchain-openai>=0.1.0
+typing_extensions>=4.0.0

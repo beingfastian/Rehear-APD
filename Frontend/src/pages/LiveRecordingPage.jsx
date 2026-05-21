@@ -5,7 +5,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Loader2, CheckCircle2, AlertCircle, Mic } from 'lucide-react';
+import { useVoiceCommands } from '../hooks/useVoiceCommands';
+import { playUrl, speak } from '../utils/ttsPlayer';
 
 // ── Wave Section — exact paths extracted from Figma SVG root file ─────────────
 // Figma canvas: 1920×1190, wave content: x=413–1840, y=190–437
@@ -162,8 +164,8 @@ const MicButton = ({ active, paused }) => {
 };
 
 // ── Instruction Player Panel ──────────────────────────────────────────────────
-const InstructionPlayer = ({ instructions, onResume, onStop, isProcessing }) => {
-  const [currentId, setCurrentId] = useState(null);
+// currentId / setCurrentId are lifted to the parent so voice commands can control playback.
+const InstructionPlayer = ({ instructions, onResume, onStop, isProcessing, currentId, setCurrentId }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -172,7 +174,8 @@ const InstructionPlayer = ({ instructions, onResume, onStop, isProcessing }) => 
   const saved = instructions.filter(i => i.status === 'saved' && i.audioUrl);
   const saving = instructions.filter(i => i.status === 'saving').length;
 
-  useEffect(() => { if (!currentId && saved.length > 0) setCurrentId(saved[0].id); }, [saved.length, currentId]);
+  // Auto-select first instruction when list populates (only if nothing is selected).
+  useEffect(() => { if (!currentId && saved.length > 0) setCurrentId(saved[0].id); }, [saved.length]); // eslint-disable-line
 
   const curr = saved.find(i => i.id === currentId) || saved[0] || null;
   const currIdx = saved.indexOf(curr);
@@ -281,6 +284,9 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   const [error, setError] = useState(null);
   const [instructions, setInstructions] = useState([]);
 
+  // Voice controls — lifted cursor state shared with InstructionPlayer
+  const [voiceCursorId, setVoiceCursorId] = useState(null);
+
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
   const timerValRef = useRef(0);
@@ -290,6 +296,9 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   const filteringRef = useRef(false);
   const pendingTTSRef = useRef(0);
   const instructionsRef = useRef([]);
+  
+  const startRecRef  = useRef(null);
+  const handleStopRef = useRef(null);
 
   useEffect(() => { instructionsRef.current = instructions; }, [instructions]);
   useEffect(() => { injectStyle(); }, []);
@@ -335,23 +344,64 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setError('Live speech not supported. Please use Chrome or Edge.'); return; }
     const rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+    
     rec.onresult = e => {
+      if (recognitionRef.current !== rec) return;
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) { const tr = t.trim(); if (tr) { fullTxRef.current += ' ' + tr; setSegments(p => [...p, { text: tr, isInstruction: false }]); filterQRef.current.push(tr); filterRunRef.current?.(); } setInterimText(''); }
-        else interim += t;
+        if (e.results[i].isFinal) {
+          const tr = t.trim();
+          if (tr) {
+            // Check for voice end command while recording
+            const lower = tr.toLowerCase();
+            if (lower.includes('end session') || lower.includes('stop session') || lower.includes('finish session')) {
+              handleStopRef.current?.();
+              return;
+            }
+            fullTxRef.current += ' ' + tr;
+            setSegments(p => [...p, { text: tr, isInstruction: false }]);
+            filterQRef.current.push(tr);
+            filterRunRef.current?.();
+          }
+          setInterimText('');
+        } else {
+          interim += t;
+        }
       }
       setInterimText(interim);
     };
-    rec.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') setError('Mic error: ' + e.error); };
-    rec.onend = () => { if (isRecRef.current) try { rec.start(); } catch { } };
+
+    rec.onerror = e => {
+      if (recognitionRef.current !== rec) return;
+      if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        setError('Mic error: ' + e.error);
+      }
+    };
+
+    rec.onend = () => {
+      if (recognitionRef.current !== rec) return;
+      if (isRecRef.current) {
+        setTimeout(() => {
+          if (recognitionRef.current === rec && isRecRef.current) {
+            try { rec.start(); } catch { }
+          }
+        }, 400);
+      }
+    };
+
     recognitionRef.current = rec;
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null;
+      }
+      try { rec.stop(); } catch {}
+    };
   }, []); // eslint-disable-line
 
-  const startRec = useCallback(() => {
-    setError(null); setSegments([]); setInterimText(''); setInstructions([]);
+  const startRec = useCallback(function startRec_impl() {
+    setError(null); setSegments([]); setInterimText(''); setInstructions([]); setVoiceCursorId(null);
     fullTxRef.current = ''; filterQRef.current = []; filteringRef.current = false;
     pendingTTSRef.current = 0; timerValRef.current = 0; isRecRef.current = true;
     setIsRecording(true); setIsPaused(false); setTimer(0); startTimer();
@@ -408,6 +458,79 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
     }
   }, [processLiveTranscription, showNotification, setCurrentPage, stopTimer]); // eslint-disable-line
 
+  // Keep voice-command refs current (after both callbacks are defined).
+  useEffect(() => { startRecRef.current   = startRec;   }, [startRec]);
+  useEffect(() => { handleStopRef.current = handleStop; }, [handleStop]);
+
+  // ── Voice command helpers (defined after functions for clean closures) ──
+  const getSaved = useCallback(() =>
+    instructions.filter(i => i.status === 'saved' && i.audioUrl),
+    [instructions]
+  );
+
+  const handleVoiceNext = useCallback(() => {
+    const saved = getSaved();
+    if (saved.length === 0) { speak('No more instructions'); return; }
+    setVoiceCursorId(prev => {
+      const idx = saved.findIndex(i => i.id === prev);
+      if (idx < saved.length - 1) {
+        const next = saved[idx + 1];
+        playUrl(next.audioUrl).catch(() => {});
+        return next.id;
+      }
+      speak('No more instructions');
+      return prev;
+    });
+  }, [getSaved]);
+
+  const handleVoiceBack = useCallback(() => {
+    const saved = getSaved();
+    if (saved.length === 0) { speak('No more instructions'); return; }
+    setVoiceCursorId(prev => {
+      const idx = saved.findIndex(i => i.id === prev);
+      if (idx > 0) {
+        const prevItem = saved[idx - 1];
+        playUrl(prevItem.audioUrl).catch(() => {});
+        return prevItem.id;
+      }
+      if (saved.length > 0) {
+        playUrl(saved[0].audioUrl).catch(() => {});
+        return saved[0].id;
+      }
+      return prev;
+    });
+  }, [getSaved]);
+
+  const handleVoiceRehear = useCallback(() => {
+    const saved = getSaved();
+    if (saved.length === 0) { speak('No instructions yet'); return; }
+    setVoiceCursorId(saved[0].id);
+    playUrl(saved[0].audioUrl).catch(() => {});
+  }, [getSaved]);
+
+  const handleVoiceStartSession = useCallback(() => {
+    if (isPaused) {
+      handleResume();
+    } else if (!isRecording) {
+      startRec();
+    }
+  }, [isPaused, isRecording, handleResume, startRec]);
+
+  const handleVoiceEndSession = useCallback(() => {
+    handleStop();
+  }, [handleStop]);
+
+  // voice commands are only enabled when paused to prevent mic capture conflict with recording
+  const { isListening: voiceListening } = useVoiceCommands({
+    enabled: isPaused,
+    onNext:         handleVoiceNext,
+    onBack:         handleVoiceBack,
+    onRehear:       handleVoiceRehear,
+    onStartSession: handleVoiceStartSession,
+    onEndSession:   handleVoiceEndSession,
+  });
+
+  const sessionActive = isRecording || isPaused;
   const savedCount = instructions.filter(i => i.status === 'saved').length;
   const savingCount = instructions.filter(i => i.status === 'saving').length;
   const F = { fontFamily: 'Urbanist, sans-serif' };
@@ -473,6 +596,16 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
             </span>
           </div>
 
+          {/* Voice command status badge */}
+          {sessionActive && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '10px', padding: '4px 12px', borderRadius: '20px', backgroundColor: (isRecording || voiceListening) ? 'rgba(49,135,216,0.10)' : 'rgba(180,180,180,0.12)' }}>
+              <Mic style={{ width: '12px', height: '12px', color: (isRecording || voiceListening) ? '#3187D8' : '#aaa' }} />
+              <span style={{ ...F, fontSize: '12px', fontWeight: 500, color: (isRecording || voiceListening) ? '#3187D8' : '#aaa' }}>
+                {(isRecording || voiceListening) ? 'Voice commands active' : 'Voice commands unavailable'}
+              </span>
+            </div>
+          )}
+
           {!isPaused && !isProcessing && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '24px' }}>
               <button onClick={handlePause}
@@ -512,6 +645,8 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
             onResume={handleResume}
             onStop={handleStop}
             isProcessing={isProcessing}
+            currentId={voiceCursorId}
+            setCurrentId={setVoiceCursorId}
           />
         )}
 
