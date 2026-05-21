@@ -5,7 +5,7 @@ import json
 import secrets
 import tempfile
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -230,6 +230,11 @@ class GoogleAuthRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
 
 
 class VerifyResetCodeRequest(BaseModel):
@@ -483,20 +488,107 @@ async def auth_signup(body: SignupRequest, db: Session = Depends(get_db)):
     if not valid:
         raise HTTPException(status_code=400, detail=err or "Invalid email domain")
 
-    if db.query(User).filter_by(email=body.email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
+    existing_user = db.query(User).filter_by(email=body.email).first()
+    if existing_user:
+        if existing_user.email_verified or existing_user.is_active or existing_user.status == "active":
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        # Update the pending user with new password / name and send a new OTP
+        otp = generate_otp()
+        existing_user.name = body.name
+        existing_user.hashed_password = hash_password(body.password)
+        existing_user.otp_code = otp
+        existing_user.otp_expires_at = datetime.utcnow() + timedelta(minutes=2)
+        db.commit()
+
+        try:
+            await send_otp_email(body.email, otp, body.name)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to send verification email: {exc}")
+
+        return {"status": "pending", "email": body.email, "message": "Verification code sent to email"}
+
+    # Create new pending user
+    otp = generate_otp()
     user = User(
         name=body.name,
         email=body.email,
         hashed_password=hash_password(body.password),
         auth_provider=auth_utils.LOCAL_AUTH_PROVIDER,
         oauth_email_verified=False,
+        email_verified=False,
+        is_active=False,
+        otp_code=otp,
+        otp_expires_at=datetime.utcnow() + timedelta(minutes=2),
+        status="pending",
     )
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    try:
+        await send_otp_email(body.email, otp, body.name)
+    except Exception as exc:
+        db.delete(user)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to send verification email: {exc}")
+
+    return {"status": "pending", "email": body.email, "message": "Verification code sent to email"}
+
+
+@app.post("/api/auth/verify-otp")
+async def auth_verify_otp(body: VerifyOtpRequest, db: Session = Depends(get_db)):
+    email_addr = auth_utils.normalize_email_or_raise(body.email)
+    user = db.query(User).filter_by(email=email_addr).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="No pending registration found for this email")
+
+    if user.email_verified and user.is_active and user.status == "active":
+        token = create_token(user.id, user.email)
+        return {"token": token, "user": serialize_user(user)}
+
+    if not user.otp_code or not user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="No verification code found. Please sign up again.")
+
+    if datetime.utcnow() > user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+
+    if user.otp_code != body.otp.strip():
+        raise HTTPException(status_code=400, detail="Incorrect verification code")
+
+    # Mark as verified and active
+    user.email_verified = True
+    user.is_active = True
+    user.status = "active"
+    user.otp_code = None
+    user.otp_expires_at = None
+    db.commit()
+    db.refresh(user)
+
     token = create_token(user.id, user.email)
     return {"token": token, "user": serialize_user(user)}
+
+
+@app.post("/api/auth/resend-otp")
+async def auth_resend_otp(email: str, db: Session = Depends(get_db)):
+    email_addr = auth_utils.normalize_email_or_raise(email)
+    user = db.query(User).filter_by(email=email_addr).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="No pending registration found for this email")
+    if user.email_verified or user.is_active or user.status == "active":
+        raise HTTPException(status_code=400, detail="Email is already verified")
+
+    otp = generate_otp()
+    user.otp_code = otp
+    user.otp_expires_at = datetime.utcnow() + timedelta(minutes=2)
+    db.commit()
+
+    try:
+        await send_otp_email(email_addr, otp, user.name)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {exc}")
+
+    return {"message": "Verification code resent successfully"}
 
 
 @app.post("/api/auth/login")

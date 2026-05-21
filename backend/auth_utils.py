@@ -74,10 +74,12 @@ def ensure_allowed_signup_email(email: str) -> str:
     except (
         dns.resolver.NXDOMAIN,
         dns.resolver.NoAnswer,
-        dns.resolver.NoNameservers,
-        dns.resolver.LifetimeTimeout,
     ) as exc:
         raise HTTPException(status_code=400, detail="Email domain cannot receive mail") from exc
+    except Exception as exc:
+        import logging
+        logging.warning(f"DNS lookup for domain {domain} failed: {exc}. Allowing registration as fallback.")
+        return normalized_email
 
     if not any(getattr(record, "exchange", None) for record in answers):
         raise HTTPException(status_code=400, detail="Email domain cannot receive mail")

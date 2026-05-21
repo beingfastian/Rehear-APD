@@ -136,8 +136,17 @@ const LoginPage = ({ setCurrentPage, pageData = {} }) => {
               </div>
 
               {error && (
-                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
+                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 space-y-2">
+                  <p>{error}</p>
+                  {error.includes('verify your email') && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage('verify-email-otp', { email })}
+                      className="font-semibold text-red-800 underline hover:text-red-950 block text-xs"
+                    >
+                      Enter verification code →
+                    </button>
+                  )}
                 </div>
               )}
 
