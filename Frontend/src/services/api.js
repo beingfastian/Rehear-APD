@@ -51,6 +51,37 @@ class ApiService {
     return response.json();
   }
 
+  async verifyOtp({ email, otp }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, otp }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Verification failed'));
+    }
+
+    return response.json();
+  }
+
+  async resendOtp({ email }) {
+    const response = await fetch(`${API_BASE_URL}/api/auth/resend-otp?email=${encodeURIComponent(email)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await this.parseError(response, 'Unable to resend verification code'));
+    }
+
+    return response.json();
+  }
+
   async login({ email, password }) {
     const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',

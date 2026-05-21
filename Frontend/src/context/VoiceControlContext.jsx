@@ -43,6 +43,7 @@ export function VoiceControlProvider({ children, onNavigate }) {
   const recognitionRef  = useRef(null);
   const isActiveRef     = useRef(false);         // should recognition keep running
   const voiceStateRef   = useRef(VOICE_STATES.IDLE);
+  const lastTriggeredIndexRef = useRef(-1);
 
   // Keep ref in sync so recognition callbacks have current state without stale closures
   useEffect(() => { voiceStateRef.current = voiceState; }, [voiceState]);
@@ -174,6 +175,7 @@ export function VoiceControlProvider({ children, onNavigate }) {
 
     rec.onstart = () => {
       console.log('[VoiceControl] 🎙️ Mic STARTED — listening for commands');
+      lastTriggeredIndexRef.current = -1;
       setDebugInfo(d => ({ ...d, micStatus: 'listening', lastError: '' }));
     };
 
@@ -184,8 +186,9 @@ export function VoiceControlProvider({ children, onNavigate }) {
         const isFinal = event.results[i].isFinal;
 
         // Show interim results in debug so we know mic is hearing
-        if (!isFinal) {
-          setDebugInfo(d => ({ ...d, lastHeard: `…${transcript}` }));
+        setDebugInfo(d => ({ ...d, lastHeard: isFinal ? transcript : `…${transcript}` }));
+
+        if (i <= lastTriggeredIndexRef.current) {
           continue;
         }
 
@@ -195,14 +198,15 @@ export function VoiceControlProvider({ children, onNavigate }) {
           console.log('[VoiceControl] ⏩ Skipped (AEC guard, reading state)');
           continue;
         }
-        setDebugInfo(d => ({ ...d, lastHeard: transcript }));
+
         const cmd = matchVoiceCommand(transcript);
         if (cmd) {
           console.log('[VoiceControl] ✅ command:', cmd, '| transcript:', transcript);
-          setDebugInfo(d => ({ ...d, lastCommand: cmd }));
+          lastTriggeredIndexRef.current = i;
+          setDebugInfo(d => ({ ...d, lastCommand: cmd, lastHeard: transcript }));
           dispatchCommand(cmd, transcript);
-        } else {
-          console.log('[VoiceControl] ❌ no command matched for:', transcript);
+        } else if (isFinal) {
+          console.log('[VoiceControl] ❌ no command matched for final:', transcript);
           setDebugInfo(d => ({ ...d, lastCommand: '(no match)' }));
         }
       }

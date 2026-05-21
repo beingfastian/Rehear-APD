@@ -24,7 +24,9 @@ def _check_mx_sync(domain: str) -> tuple[bool, str]:
     except dns.resolver.NoAnswer:
         return False, f"No MX records for {domain}"
     except Exception as e:
-        return False, f"DNS lookup failed: {e}"
+        import logging
+        logging.warning(f"DNS lookup failed for domain {domain}: {e}. Allowing registration as fallback.")
+        return True, ""
 
 
 async def validate_email_domain(email: str) -> tuple[bool, str]:

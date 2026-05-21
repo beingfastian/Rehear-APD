@@ -272,6 +272,34 @@ const InstructionPlayer = ({ instructions, onResume, onStop, isProcessing, curre
 };
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
+const getDeltaText = (oldText, newText) => {
+  const cleanOld = oldText.trim();
+  const cleanNew = newText.trim();
+  if (!cleanOld) return cleanNew;
+  
+  if (cleanNew.toLowerCase().startsWith(cleanOld.toLowerCase())) {
+    return cleanNew.slice(cleanOld.length).trim();
+  }
+  
+  const oldWords = cleanOld.split(/\s+/);
+  const newWords = cleanNew.split(/\s+/);
+  
+  let matchCount = 0;
+  while (matchCount < oldWords.length && matchCount < newWords.length) {
+    if (oldWords[matchCount].toLowerCase() === newWords[matchCount].toLowerCase()) {
+      matchCount++;
+    } else {
+      break;
+    }
+  }
+  
+  if (matchCount > 0) {
+    return newWords.slice(matchCount).join(' ');
+  }
+  
+  return cleanNew;
+};
+
 const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   const { setCurrentJob, showNotification, processLiveTranscription } = useApp();
 
@@ -299,6 +327,11 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   
   const startRecRef  = useRef(null);
   const handleStopRef = useRef(null);
+
+  // Refs for custom pause detection and delta transcription
+  const lastSpeechTimeRef = useRef(0);
+  const committedByIndexRef = useRef({});
+  const interimByIndexRef = useRef({});
 
   useEffect(() => { instructionsRef.current = instructions; }, [instructions]);
   useEffect(() => { injectStyle(); }, []);
@@ -340,6 +373,43 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   }, [genTTS]);
   useEffect(() => { filterRunRef.current = runFilter; }, [runFilter]);
 
+  const commitPendingInterim = useCallback(() => {
+    let committedAny = false;
+    
+    Object.keys(interimByIndexRef.current).forEach(idxStr => {
+      const idx = parseInt(idxStr, 10);
+      const transcript = interimByIndexRef.current[idx];
+      if (!transcript) return;
+      
+      const alreadyCommitted = committedByIndexRef.current[idx] || "";
+      const delta = getDeltaText(alreadyCommitted, transcript);
+      
+      if (delta) {
+        const tr = delta.trim();
+        if (tr) {
+          // Check for voice end command
+          const lower = tr.toLowerCase();
+          if (lower.includes('end session') || lower.includes('stop session') || lower.includes('finish session')) {
+            handleStopRef.current?.();
+            return;
+          }
+          fullTxRef.current += (fullTxRef.current ? ' ' : '') + tr;
+          setSegments(p => [...p, { text: tr, isInstruction: false }]);
+          filterQRef.current.push(tr);
+          committedAny = true;
+        }
+      }
+      
+      // Update committed text for this index
+      committedByIndexRef.current[idx] = transcript;
+    });
+    
+    if (committedAny) {
+      filterRunRef.current?.();
+      setInterimText('');
+    }
+  }, []);
+
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setError('Live speech not supported. Please use Chrome or Edge.'); return; }
@@ -347,29 +417,70 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
     
     rec.onresult = e => {
       if (recognitionRef.current !== rec) return;
-      let interim = '';
+      
+      // Update last speech time
+      lastSpeechTimeRef.current = Date.now();
+      
+      const activeInterimIndices = new Set();
+      
+      // Clean up any stale interim indices
+      Object.keys(interimByIndexRef.current).forEach(idxStr => {
+        const idx = parseInt(idxStr, 10);
+        if (idx < e.resultIndex) {
+          delete interimByIndexRef.current[idx];
+        }
+      });
+      
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) {
-          const tr = t.trim();
-          if (tr) {
-            // Check for voice end command while recording
-            const lower = tr.toLowerCase();
-            if (lower.includes('end session') || lower.includes('stop session') || lower.includes('finish session')) {
-              handleStopRef.current?.();
-              return;
+        const transcript = e.results[i][0].transcript;
+        const isFinal = e.results[i].isFinal;
+        
+        if (isFinal) {
+          const alreadyCommitted = committedByIndexRef.current[i] || "";
+          const delta = getDeltaText(alreadyCommitted, transcript);
+          
+          if (delta) {
+            const tr = delta.trim();
+            if (tr) {
+              // Check for voice end command while recording
+              const lower = tr.toLowerCase();
+              if (lower.includes('end session') || lower.includes('stop session') || lower.includes('finish session')) {
+                handleStopRef.current?.();
+                return;
+              }
+              fullTxRef.current += (fullTxRef.current ? ' ' : '') + tr;
+              setSegments(p => [...p, { text: tr, isInstruction: false }]);
+              filterQRef.current.push(tr);
+              filterRunRef.current?.();
             }
-            fullTxRef.current += ' ' + tr;
-            setSegments(p => [...p, { text: tr, isInstruction: false }]);
-            filterQRef.current.push(tr);
-            filterRunRef.current?.();
           }
-          setInterimText('');
+          
+          // Mark as fully committed
+          committedByIndexRef.current[i] = transcript;
+          // Remove from interim registry
+          delete interimByIndexRef.current[i];
         } else {
-          interim += t;
+          // It is interim
+          interimByIndexRef.current[i] = transcript;
+          activeInterimIndices.add(i);
         }
       }
-      setInterimText(interim);
+      
+      // Calculate total uncommitted interim text to show in UI
+      let totalUncommittedInterim = '';
+      Object.keys(interimByIndexRef.current).forEach(idxStr => {
+        const idx = parseInt(idxStr, 10);
+        if (activeInterimIndices.has(idx)) {
+          const t = interimByIndexRef.current[idx];
+          const committed = committedByIndexRef.current[idx] || "";
+          const delta = getDeltaText(committed, t);
+          if (delta) {
+            totalUncommittedInterim += (totalUncommittedInterim ? ' ' : '') + delta;
+          }
+        }
+      });
+      
+      setInterimText(totalUncommittedInterim);
     };
 
     rec.onerror = e => {
@@ -400,10 +511,27 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
     };
   }, []); // eslint-disable-line
 
+  useEffect(() => {
+    if (!isRecording) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const silenceDuration = now - lastSpeechTimeRef.current;
+      if (silenceDuration >= 1200) {
+        commitPendingInterim();
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [isRecording, commitPendingInterim]);
+
   const startRec = useCallback(function startRec_impl() {
     setError(null); setSegments([]); setInterimText(''); setInstructions([]); setVoiceCursorId(null);
     fullTxRef.current = ''; filterQRef.current = []; filteringRef.current = false;
     pendingTTSRef.current = 0; timerValRef.current = 0; isRecRef.current = true;
+    
+    lastSpeechTimeRef.current = Date.now();
+    committedByIndexRef.current = {};
+    interimByIndexRef.current = {};
+
     setIsRecording(true); setIsPaused(false); setTimer(0); startTimer();
     try { recognitionRef.current?.start(); } catch { }
   }, [startTimer]);
@@ -411,29 +539,27 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
   useEffect(() => { const t = setTimeout(startRec, 300); return () => clearTimeout(t); }, []); // eslint-disable-line
 
   const handlePause = useCallback(async () => {
-    isRecRef.current = false; stopTimer(); setIsRecording(false); setIsPaused(true); setInterimText('');
+    isRecRef.current = false; stopTimer(); setIsRecording(false); setIsPaused(true);
+    commitPendingInterim();
+    setInterimText('');
     try { recognitionRef.current?.stop(); } catch { }
     if (filterQRef.current.length > 0) filterRunRef.current?.();
-  }, [stopTimer]);
+  }, [stopTimer, commitPendingInterim]);
 
   const handleResume = useCallback(() => {
     isRecRef.current = true; setIsPaused(false); setIsRecording(true); startTimer();
+    lastSpeechTimeRef.current = Date.now();
     try { recognitionRef.current?.start(); } catch { }
   }, [startTimer]);
 
   const handleStop = useCallback(async () => {
     isRecRef.current = false; stopTimer(); setIsRecording(false); setIsPaused(false);
     
+    commitPendingInterim();
+    
     try { recognitionRef.current?.stop(); } catch { }
 
-    // Flush any pending interim text
-    setInterimText(prev => {
-      const tr = prev.trim();
-      if (tr) {
-        fullTxRef.current += ' ' + tr;
-      }
-      return '';
-    });
+    setInterimText('');
 
     const finalTx = fullTxRef.current.trim();
     if (!finalTx) { 
@@ -456,7 +582,7 @@ const LiveRecordingPage = ({ recordingName, setCurrentPage }) => {
     finally { 
       setIsProcessing(false); 
     }
-  }, [processLiveTranscription, showNotification, setCurrentPage, stopTimer]); // eslint-disable-line
+  }, [processLiveTranscription, showNotification, setCurrentPage, stopTimer, commitPendingInterim]); // eslint-disable-line
 
   // Keep voice-command refs current (after both callbacks are defined).
   useEffect(() => { startRecRef.current   = startRec;   }, [startRec]);

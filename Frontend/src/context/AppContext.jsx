@@ -230,8 +230,22 @@ export const AppProvider = ({ children }) => {
 
   const signupWithPassword = async ({ name, email, password }) => {
     const data = await apiService.signup({ name, email, password });
-    applyAuthSession(data.token, data.user);
+    if (data.token) {
+      applyAuthSession(data.token, data.user);
+    }
     return data;
+  };
+
+  const verifySignupOtp = async ({ email, otp }) => {
+    const data = await apiService.verifyOtp({ email, otp });
+    if (data.token) {
+      applyAuthSession(data.token, data.user);
+    }
+    return data;
+  };
+
+  const resendSignupOtp = async ({ email }) => {
+    return apiService.resendOtp({ email });
   };
 
   const loginWithGoogle = async (credential) => {
@@ -502,6 +516,8 @@ export const AppProvider = ({ children }) => {
     deleteJob, // NEW: Delete job
     loginWithPassword,
     signupWithPassword,
+    verifySignupOtp,
+    resendSignupOtp,
     loginWithGoogle,
     requestPasswordReset,
     resendPasswordResetCode,

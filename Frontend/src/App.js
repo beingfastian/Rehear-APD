@@ -14,6 +14,7 @@ import HelpCenterPage      from './pages/HelpCenterPage';
 import LiveRecordingPage   from './pages/LiveRecordingPage';
 import LoginPage           from './pages/LoginPage';
 import SignupPage          from './pages/SignupPage';
+import VerifyEmailOtpPage  from './pages/VerifyEmailOtpPage';
 import ForgotPasswordPage  from './pages/ForgotPasswordPage';
 import VerifyResetCodePage from './pages/VerifyResetCodePage';
 import ResetPasswordPage   from './pages/ResetPasswordPage';
@@ -25,7 +26,7 @@ import Notification from './components/shared/Notification';
 
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const AUTH_PAGES = ['login', 'signup', 'forgot-password', 'verify-reset-code', 'reset-password'];
+const AUTH_PAGES = ['login', 'signup', 'forgot-password', 'verify-reset-code', 'reset-password', 'verify-email-otp'];
 
 function getStoredUser() {
   try {
@@ -101,6 +102,10 @@ function AppContent({ onLogout }) {
   const renderAuthPage = () => {
     if (currentPage === 'signup') {
       return <SignupPage setCurrentPage={navigateTo} pageData={pageData} />;
+    }
+
+    if (currentPage === 'verify-email-otp') {
+      return <VerifyEmailOtpPage setCurrentPage={navigateTo} pageData={pageData} />;
     }
 
     if (currentPage === 'forgot-password') {

@@ -29,13 +29,18 @@ const SignupPage = ({ setCurrentPage }) => {
 
     setIsSubmitting(true);
     try {
-      await signupWithPassword({
+      const response = await signupWithPassword({
         name: form.name,
         email: form.email,
         password: form.password,
       });
-      showNotification('Account created successfully.', 'success');
-      setCurrentPage('dashboard');
+      if (response && response.status === 'pending') {
+        showNotification(response.message || 'Verification code sent to email.', 'success');
+        setCurrentPage('verify-email-otp', { email: form.email });
+      } else {
+        showNotification('Account created successfully.', 'success');
+        setCurrentPage('dashboard');
+      }
     } catch (submissionError) {
       setError(submissionError.message || 'Unable to create account.');
     } finally {
