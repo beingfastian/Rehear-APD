@@ -28,6 +28,7 @@ from utils.email_validation import validate_email_domain
 import billing
 import auth_utils
 import mailer as email_utils
+from voice_agent.websocket_handler import voice_agent_ws_endpoint
 from database import SessionLocal, init_db, get_db, User, AudioJob, Instruction, AudioChunk, PasswordResetCode
 
 # Load environment variables
@@ -1338,6 +1339,12 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.websocket("/ws/voice-agent")
+async def ws_voice_agent(websocket: WebSocket):
+    """Phase 4 LangGraph voice agent WebSocket endpoint."""
+    await voice_agent_ws_endpoint(websocket)
 
 
 if __name__ == "__main__":

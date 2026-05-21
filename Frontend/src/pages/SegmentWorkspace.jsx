@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import apiService from '../services/api';
+import useKeywordListener from '../hooks/useKeywordListener';
+import VoiceCommandBar    from '../components/voice/VoiceCommandBar';
 
 /* ── Inject Inter font once ──────────────────────────────────────────────── */
 function injectFont() {
@@ -48,10 +50,10 @@ const audioErrMsg = c => ({1:'Aborted',2:'Network error',3:'Decode error',4:'Not
 
 /* ── Blue circle play button ─────────────────────────────────────────────── */
 const PlayCircle = ({ size = 30, active, loading, playing, onClick }) => (
-  <button onClick={onClick} style={{
+  <div onClick={onClick} style={{
     width:`${size}px`, height:`${size}px`, borderRadius:'50%', flexShrink:0,
     background:'linear-gradient(135deg,#3b82f6,#1d4ed8)',
-    border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+    border:'none', cursor: onClick ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'center',
     boxShadow:'0 2px 8px rgba(59,130,246,0.4)',
   }}>
     {loading && active
@@ -59,7 +61,7 @@ const PlayCircle = ({ size = 30, active, loading, playing, onClick }) => (
       : active && playing
         ? <Pause  style={{ width:'12px', height:'12px', color:'#fff' }} />
         : <Play   style={{ width:'12px', height:'12px', color:'#fff', marginLeft:'1px' }} />}
-  </button>
+  </div>
 );
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -88,6 +90,7 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
   const autoPlayRef  = useRef(false);
   const hasPlayedRef = useRef(false);
   const containerRef = useRef(null);
+  const disableAutoAdvanceRef = useRef(false);
 
   useEffect(() => { injectFont(); }, []);
 
@@ -156,8 +159,15 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
     };
     const onEnd = () => {
       setIsPlaying(false);
-      if (repeat) { audio.currentTime = 0; audio.play().then(() => setIsPlaying(true)); }
-      else if (stepIdx < allSteps.length - 1) setTimeout(() => setStepIdx(p => p + 1), 400);
+      if (repeat) {
+        audio.currentTime = 0;
+        audio.play().then(() => setIsPlaying(true));
+      } else if (disableAutoAdvanceRef.current) {
+        // Reset the flag and DO NOT advance!
+        disableAutoAdvanceRef.current = false;
+      } else if (stepIdx < allSteps.length - 1) {
+        setTimeout(() => setStepIdx(p => p + 1), 400);
+      }
     };
 
     audio.addEventListener('loadeddata',     onData);
@@ -194,6 +204,23 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
     if (shuffle) jumpTo(Math.floor(Math.random() * allSteps.length));
     else if (stepIdx < allSteps.length - 1) jumpTo(stepIdx + 1);
   };
+
+  /* ── Voice keyword listener — only reacts to "start", "next", "back" ── */
+  const voiceStatus = useKeywordListener({
+    onStart: () => {
+      disableAutoAdvanceRef.current = false;
+      jumpTo(0);
+    },
+    onNext:  () => {
+      disableAutoAdvanceRef.current = false;
+      next();
+    },
+    onBack:  () => {
+      disableAutoAdvanceRef.current = true;
+      prev();
+    },
+    enabled: !!currentJob,
+  });
   const seek   = e => {
     if (!duration) return;
     const r = e.currentTarget.getBoundingClientRect();
@@ -258,6 +285,21 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
 
         {/* Right: action buttons */}
         <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+          {/* Voice mic indicator */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '6px 14px', borderRadius: '20px',
+            border: `1.5px solid ${voiceStatus.micActive ? '#86efac' : '#fcd34d'}`,
+            background: voiceStatus.micActive ? '#f0fdf4' : '#fffbeb',
+            fontSize: '12px', fontWeight: 600,
+            color: voiceStatus.micActive ? '#166534' : '#92400e',
+          }}>
+            <div style={{
+              width: '6px', height: '6px', borderRadius: '50%',
+              background: voiceStatus.micActive ? '#22c55e' : '#f59e0b',
+            }} />
+            {voiceStatus.micActive ? '🎤 Mic On' : '🎤 Starting…'}
+          </div>
           <button onClick={exportBrief} style={{
             padding:'8px 18px', borderRadius:'20px',
             border:'1.5px solid #cbd5e1', background:'#fff',
@@ -378,18 +420,22 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
 
           {/* Per-instruction cards */}
           {(currentJob.instructions || []).map((inst, iIdx) => {
-            const step = inst.steps[0];
-            const gIdx = allSteps.findIndex(s => s.iIdx === iIdx && s.sIdx === 0);
-            const active = gIdx === stepIdx;
-            const fname = `audio_chunk_0${gIdx + 1}.mp3`;
+            const step      = inst.steps[0];
+            const gIdx      = allSteps.findIndex(s => s.iIdx === iIdx && s.sIdx === 0);
+            const active    = gIdx === stepIdx;
+            const fname     = `audio_chunk_0${gIdx + 1}.mp3`;
 
             return (
               <div key={iIdx} style={{
-                backgroundColor:'#fff', 
+                backgroundColor:'#fff',
                 borderRadius:'16px',
                 padding: '20px',
-                boxShadow: active ? '0 4px 20px rgba(59,130,246,0.1)' : '0 2px 12px rgba(0,0,0,0.03)',
-                border: active ? '1px solid #bfdbfe' : '1px solid #f1f5f9',
+                boxShadow: active
+                  ? '0 4px 20px rgba(59,130,246,0.1)'
+                  : '0 2px 12px rgba(0,0,0,0.03)',
+                border: active
+                  ? '1px solid #bfdbfe'
+                  : '1px solid #f1f5f9',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '16px',
@@ -414,7 +460,7 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
                     onClick={() => active ? togglePlay() : jumpTo(gIdx)}
                     style={{ display:'flex', alignItems:'center', gap:'10px', background:'none', border:'none', cursor:'pointer', padding:0 }}
                   >
-                    <PlayCircle size={28} active={active} loading={isLoading} playing={isPlaying} onClick={() => {}} />
+                    <PlayCircle size={28} active={active} loading={isLoading} playing={isPlaying} onClick={null} />
                     <span style={{ fontSize:'13px', fontWeight:600, color:'#334155' }}>
                       {active && isPlaying ? 'Playing…' : 'Play Segment'}
                     </span>
@@ -562,6 +608,17 @@ const SegmentWorkspace = ({ setCurrentPage }) => {
           </div>
         </div>
       </div>
+      {/* ── Voice Command Floating Bar ── */}
+      {currentJob && (
+        <VoiceCommandBar
+          status={voiceStatus}
+          onStart={() => jumpTo(0)}
+          onNext={next}
+          onBack={prev}
+          currentStep={stepIdx}
+          totalSteps={allSteps.length}
+        />
+      )}
     </div>
   );
 };
