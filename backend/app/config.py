@@ -78,6 +78,7 @@ class Settings:
 def get_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "development").strip().lower()
     smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
     return Settings(
         app_env=app_env,
         database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
@@ -93,10 +94,10 @@ def get_settings() -> Settings:
         smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
         smtp_user=smtp_user,
-        smtp_pass=os.getenv("SMTP_PASS", ""),
+        smtp_pass=smtp_pass,
         smtp_from=os.getenv("SMTP_FROM", smtp_user),
-        email_user=os.getenv("EMAIL_USER", ""),
-        email_pass=os.getenv("EMAIL_PASS", ""),
+        email_user=os.getenv("EMAIL_USER") or smtp_user,
+        email_pass=os.getenv("EMAIL_PASS") or smtp_pass,
         revenuecat_webhook_auth=os.getenv("REVENUECAT_WEBHOOK_AUTH") or None,
         blocked_email_domains={d.lower() for d in _csv(os.getenv("BLOCKED_EMAIL_DOMAINS", ""))},
         email_mx_lookup_timeout_seconds=float(os.getenv("EMAIL_MX_LOOKUP_TIMEOUT_SECONDS", "4")),

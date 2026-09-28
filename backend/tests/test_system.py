@@ -35,5 +35,22 @@ def test_missing_jwt_secret_falls_back_outside_production(monkeypatch):
     assert len(config._resolve_jwt_secret("development")) == 64
 
 
+def test_signup_email_credentials_fall_back_to_smtp(monkeypatch):
+    monkeypatch.delenv("EMAIL_USER", raising=False)
+    monkeypatch.delenv("EMAIL_PASS", raising=False)
+    monkeypatch.setenv("SMTP_USER", "mailer@school.org")
+    monkeypatch.setenv("SMTP_PASS", "app-password")
+
+    settings = config.get_settings.__wrapped__()
+
+    assert (settings.email_user, settings.email_pass) == ("mailer@school.org", "app-password")
+
+
+def test_explicit_signup_email_credentials_win(monkeypatch):
+    monkeypatch.setenv("EMAIL_USER", "otp@school.org")
+    monkeypatch.setenv("SMTP_USER", "mailer@school.org")
+    assert config.get_settings.__wrapped__().email_user == "otp@school.org"
+
+
 def test_cors_origins_are_parsed_from_csv():
     assert config._csv(" https://a.com, https://b.com ,,") == ["https://a.com", "https://b.com"]

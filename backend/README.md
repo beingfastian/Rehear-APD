@@ -44,7 +44,8 @@ uvicorn main:app --reload --port 10000
 
 ## Configuration
 
-Set in the environment or `backend/.env` (never commit it).
+Set in the environment or `backend/.env` (never commit it). Start from the
+template: `cp .env.example .env`.
 
 | Variable | Required | Notes |
 |---|---|---|
