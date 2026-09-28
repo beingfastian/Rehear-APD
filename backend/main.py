@@ -778,36 +778,36 @@ async def auth_forgot_password(body: ForgotPasswordRequest, db: Session = Depend
     }
  
  
-@app.post("/api/auth/reset-password")
-async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """
-    Step 2 of password reset.
-    Verifies the OTP, hashes and saves the new password, then clears the OTP.
-    """
-    email = body.email.strip().lower()
+# @app.post("/api/auth/reset-password")
+# async def auth_reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+#     """
+#     Step 2 of password reset.
+#     Verifies the OTP, hashes and saves the new password, then clears the OTP.
+#     """
+#     email = body.email.strip().lower()
  
-    if len(body.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+#     if len(body.new_password) < 6:
+#         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
  
-    user = db.query(User).filter_by(email=email).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="No account found for that email")
+#     user = db.query(User).filter_by(email=email).first()
+#     if not user:
+#         raise HTTPException(status_code=400, detail="No account found for that email")
  
-    if not user.otp_code or not user.otp_expires_at:
-        raise HTTPException(status_code=400, detail="No reset code found. Please request a new one.")
+#     if not user.otp_code or not user.otp_expires_at:
+#         raise HTTPException(status_code=400, detail="No reset code found. Please request a new one.")
  
-    if datetime.utcnow() > user.otp_expires_at:
-        raise HTTPException(status_code=400, detail="Reset code has expired. Please request a new one.")
+#     if datetime.utcnow() > user.otp_expires_at:
+#         raise HTTPException(status_code=400, detail="Reset code has expired. Please request a new one.")
  
-    if user.otp_code != body.otp.strip():
-        raise HTTPException(status_code=400, detail="Incorrect reset code")
+#     if user.otp_code != body.otp.strip():
+#         raise HTTPException(status_code=400, detail="Incorrect reset code")
  
-    user.hashed_password = hash_password(body.new_password)
-    user.otp_code        = None
-    user.otp_expires_at  = None
-    db.commit()
+#     user.hashed_password = hash_password(body.new_password)
+#     user.otp_code        = None
+#     user.otp_expires_at  = None
+#     db.commit()
  
-    return {"message": "Password reset successfully. You can now log in with your new password."}
+#     return {"message": "Password reset successfully. You can now log in with your new password."}
 
 @app.get("/")
 async def root():
