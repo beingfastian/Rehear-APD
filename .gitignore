@@ -23,3 +23,6 @@ APD-REHEAR/dist/
 # Misc
 .DS_Store
 *.log
+# Keys / certificates
+*.pem
+*.key
