@@ -1,10 +1,4 @@
-.env
-__pycache__/
-*.pyc
-requests.log
-deploy.sh
-webhook_errors.log
+# Secrets, keys, caches and logs are covered by the root .gitignore.
+
+# Local runtime output
 steps_tts.mp3
-instruction-api-key.pem
-*.pem
-.venv/

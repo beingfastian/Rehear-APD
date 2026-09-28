@@ -1,0 +1,20 @@
+# Secrets — inject via environment variables instead
+.env
+*.env
+*.pem
+*.key
+
+# Local tooling
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.idea/
+
+# Not needed at runtime
+tests/
+*.log
+test.html
+mic.html

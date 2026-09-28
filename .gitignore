@@ -1,28 +1,58 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Environment files — never commit secrets
-backend/.env
-APD-REHEAR/.env
+# ── Secrets — never commit ─────────────────────────────────────────────────
+# Environment files (commit only the *.example templates)
 .env
+.env.*
+*.env
+!.env.example
+!*.env.example
 
-# Node dependencies
-node_modules/
-APD-REHEAR/node_modules/
-APD-REHEAR/dist/
-
-# Build outputs
-Frontend/build/
-APD-REHEAR/dist/
-
-# Claude
-.claude/
-
-# Misc
-.DS_Store
-*.log
-# Keys / certificates
+# Private keys, certificates and keystores
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+
+# Cloud / service credentials
+credentials*.json
+service-account*.json
+*-credentials.json
+.aws/
+*.tfstate
+*.tfstate.*
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# ── Node / frontend ───────────────────────────────────────────────────────
+node_modules/
+Frontend/build/
+coverage/
+
+# ── Editors / OS ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Logs / local data ─────────────────────────────────────────────────────
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# ── Tooling ───────────────────────────────────────────────────────────────
+.claude/

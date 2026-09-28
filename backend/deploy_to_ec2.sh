@@ -53,6 +53,7 @@ echo -e "${YELLOW}Uploading backend files...${NC}"
 
 # Upload Python files
 scp -i $PEM_FILE *.py $EC2_USER@$EC2_HOST:$APP_DIR/ 2>/dev/null || true
+scp -r -i $PEM_FILE app $EC2_USER@$EC2_HOST:$APP_DIR/
 
 # Upload requirements
 scp -i $PEM_FILE requirements.txt $EC2_USER@$EC2_HOST:$APP_DIR/ 2>/dev/null || true
