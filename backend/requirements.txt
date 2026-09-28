@@ -1,29 +1,34 @@
-# backend/requirements.txt
-# MODIFIED: Added LangGraph + LangChain dependencies for Phase 4 voice agent.
-# All original packages are unchanged.
+# Pinned to the versions the test-suite runs against.
+# Upgrade deliberately: e.g. openai 1.30.x is incompatible with httpx >= 0.28.
 
-# ── Original dependencies ───────────────────────────────────────────────────
-fastapi
-uvicorn[standard]
-sqlalchemy
-psycopg2-binary
-psycopg[binary]
-python-dotenv
+# Web / API
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+python-dotenv==1.2.3
+
+# Database (psycopg3 is the default driver; psycopg2 kept for postgresql:// URLs)
+SQLAlchemy==2.1.1
+psycopg[binary]==3.3.6
+psycopg2-binary==2.9.13
+
+# Auth
+bcrypt==5.0.0
+python-jose[cryptography]==3.5.0
+google-auth==2.58.1
+requests==2.34.2
+email-validator==2.3.0
+dnspython==2.8.0
+
+# OpenAI + AWS
 openai==1.30.5
 httpx==0.27.0
-boto3
-celery[redis]
-redis
-python-multipart
-bcrypt
-python-jose[cryptography]
-google-auth
-requests
-email-validator
-dnspython
+boto3==1.43.104
 
-# ── Phase 4 Voice Agent (NEW) ───────────────────────────────────────────────
-langgraph>=0.2.0
-langchain>=0.2.0
-langchain-openai>=0.1.0
-typing_extensions>=4.0.0
+# Voice agent
+langgraph==0.4.5
+typing_extensions==4.16.0
+
+# Legacy Celery worker (tasks.py, docker-compose `worker` service)
+celery[redis]==5.6.3
+redis==6.4.0

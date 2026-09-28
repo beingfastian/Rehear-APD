@@ -26,3 +26,7 @@ APD-REHEAR/dist/
 # Keys / certificates
 *.pem
 *.key
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/

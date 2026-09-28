@@ -36,6 +36,7 @@ chmod 400 $PEM_FILE
 echo -e "${YELLOW}Step 1: Uploading backend files...${NC}"
 ssh -i $PEM_FILE $EC2_USER@$EC2_HOST "mkdir -p $BACKEND_DIR"
 scp -i $PEM_FILE *.py $EC2_USER@$EC2_HOST:$BACKEND_DIR/ 2>/dev/null || true
+scp -r -i $PEM_FILE app $EC2_USER@$EC2_HOST:$BACKEND_DIR/
 scp -i $PEM_FILE requirements.txt $EC2_USER@$EC2_HOST:$BACKEND_DIR/ 2>/dev/null || true
 scp -i $PEM_FILE .env $EC2_USER@$EC2_HOST:$BACKEND_DIR/ 2>/dev/null || true
 echo -e "${GREEN}✅ Backend files uploaded${NC}"
